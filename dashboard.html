@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>پنل مدیریت ربات</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+    <style>
+        .log-container {
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body class="bg-light">
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="h3 mb-0">🎛️ پنل مدیریت ربات</h1>
+        <a href="/logout" class="btn btn-outline-danger">خروج</a>
+    </div>
+
+    <div class="row">
+        <!-- کارت وضعیت -->
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <i class="fas fa-chart-line"></i> آمار کلی
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-6 mb-3">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h6 class="card-title">کل پیام‌ها</h6>
+                                    <p class="h2">{{ status.message_stats.total }}</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-6 mb-3">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h6 class="card-title">وضعیت</h6>
+                                    <p class="h5">
+                                        {% if status.active %}
+                                            <span class="badge bg-success">فعال</span>
+                                        {% else %}
+                                            <span class="badge bg-danger">غیرفعال</span>
+                                        {% endif %}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- کارت آمار تفکیکی -->
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    <i class="fas fa-chart-pie"></i> آمار تفکیکی
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-6 mb-2">
+                            <span class="badge bg-primary">متون:</span> {{ status.message_stats.text }}
+                        </div>
+                        <div class="col-6 mb-2">
+                            <span class="badge bg-success">عکس‌ها:</span> {{ status.message_stats.photo }}
+                        </div>
+                        <div class="col-6 mb-2">
+                            <span class="badge bg-warning">صداها:</span> {{ status.message_stats.voice }}
+                        </div>
+                        <div class="col-6 mb-2">
+                            <span class="badge bg-danger">ویدئوها:</span> {{ status.message_stats.video }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- کارت مدیریت -->
+    <div class="card mb-4">
+        <div class="card-header bg-secondary text-white">
+            <i class="fas fa-cog"></i> تنظیمات
+        </div>
+        <div class="card-body">
+            <form action="/update-signature" method="post" class="mb-4">
+                <div class="mb-3">
+                    <label class="form-label">متن امضا:</label>
+                    <input type="text" name="signature" class="form-control" 
+                           value="{{ status.signature.replace('\n\n', '') }}" required>
+                </div>
+                <button type="submit" class="btn btn-primary">ذخیره تغییرات</button>
+            </form>
+
+            <form action="/toggle-bot" method="post">
+                <button type="submit" class="btn btn-{% if status.active %}danger{% else %}success{% endif %}">
+                    {% if status.active %}
+                        <i class="fas fa-power-off"></i> غیرفعال کردن ربات
+                    {% else %}
+                        <i class="fas fa-play"></i> فعال کردن ربات
+                    {% endif %}
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- کارت لاگ‌ها -->
+    <div class="card">
+        <div class="card-header bg-dark text-white">
+            <i class="fas fa-terminal"></i> لاگ اخیر
+        </div>
+        <div class="card-body">
+            <div class="log-container">
+                {{ status.logs|safe }}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
+<script>
+    // به‌روزرسانی خودکار هر 10 ثانیه
+    setTimeout(() => location.reload(), 10000);
+</script>
+</body>
+</html>
