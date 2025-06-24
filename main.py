@@ -10,12 +10,15 @@ from config import TOKEN, SOURCE_USER_ID, DESTINATION_CHAT_ID, SOURCE_TEXT, SECR
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime
 import uuid # For unique job IDs
+import jdatetime
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # تنظیمات اولیه
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
-scheduler = BackgroundScheduler(timezone="Asia/Tehran") # Timezone can be configured
-scheduler.start()
+scheduler = BackgroundScheduler(timezone="Asia/Tehran")
+if not scheduler.running:
+    scheduler.start()
 
 # غیرفعال کردن لاگ‌های Flask
 log = logging.getLogger('werkzeug')
@@ -28,42 +31,50 @@ data = {
         'photo': 0,
         'voice': 0,
         'video': 0,
-        'audio': 0,  # اضافه کردن آمار برای فایل‌های صوتی
-        'scheduled': 0, # آمار پیام های زمانبندی شده
+        'audio': 0,
+        'scheduled': 0,
         'total': 0
     },
-    'pending_media': {}, # Stores media waiting for caption or immediate send
-    'scheduled_jobs': {} # Stores info about scheduled jobs {job_id: media_info}
+    'pending_media': {},
+    'scheduled_jobs': {}
 }
 
 # وضعیت ربات
-bot_status = {"active": True, "signature": SOURCE_TEXT, "version": "1.3.0"} # Version updated
+bot_status = {"active": True, "signature": SOURCE_TEXT, "version": "1.4.0"} # Version updated for interactive schedule
 
 # تنظیمات لاگ
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
-        logging.FileHandler("bot.log"),  # ذخیره لاگ در فایل
-        logging.StreamHandler()  # نمایش لاگ در کنسول
+        logging.FileHandler("bot.log"),
+        logging.StreamHandler()
     ])
 logger = logging.getLogger(__name__)
+telebot_logger = telebot.logger
+telebot_logger.setLevel(logging.INFO) # telebot's own logger
 
 # ایجاد ربات
-bot = telebot.TeleBot(TOKEN)
+if TOKEN is None:
+    logger.error("🚨 توکن ربات یافت نشد. لطفاً متغیر محیطی TELEGRAM_BOT_TOKEN را تنظیم کنید.")
+    # exit() # Or handle more gracefully depending on desired behavior when TOKEN is missing
+bot = telebot.TeleBot(TOKEN, threaded=True)
 
+
+# Dictionary to store user's interactive scheduling state
+user_schedule_sessions = {} # Key: chat_id, Value: session_data
 
 # --- توابع کمکی ---
-def add_source_text(caption):
-    return (caption or "") + bot_status["signature"]
-
+def add_source_text(caption_text):
+    return (caption_text or "") + bot_status["signature"]
 
 def _send_media_action(media_info, job_id=None):
-    """Internal function to send media. Can be called directly or by scheduler."""
-    caption = add_source_text(media_info.get('caption', ''))
+    caption = add_source_text(media_info.get('caption'))
     media_type = media_info['type']
-    file_id = media_info['file_id']
+    file_id = media_info.get('file_id') # Make sure to handle if file_id is None for text
+    text_content = media_info.get('text_content')
+
 
     try:
         if media_type == 'photo':
@@ -74,296 +85,607 @@ def _send_media_action(media_info, job_id=None):
             bot.send_video(DESTINATION_CHAT_ID, file_id, caption=caption, parse_mode='html')
         elif media_type == 'audio':
             bot.send_audio(DESTINATION_CHAT_ID, file_id, caption=caption, parse_mode='html')
-        elif media_type == 'text': # Handling scheduled text messages
-            bot.send_message(DESTINATION_CHAT_ID, caption) # Caption already includes signature for text
+        elif media_type == 'text':
+            # For text, 'caption' here IS the text_content with signature
+            bot.send_message(DESTINATION_CHAT_ID, caption) # caption already includes signature for text
 
         data['stats'][media_type] = data['stats'].get(media_type, 0) + 1
         data['stats']['total'] += 1
         logger.info(f"✅ {media_type.capitalize()} ارسال شد (Job ID: {job_id if job_id else 'N/A'})")
         if job_id and job_id in data['scheduled_jobs']:
             del data['scheduled_jobs'][job_id]
-            data['stats']['scheduled'] = max(0, data['stats']['scheduled'] -1)
+            data['stats']['scheduled'] = max(0, data['stats']['scheduled'] - 1)
 
     except Exception as e:
-        logger.error(f"❌ خطا در ارسال {media_type}: {e} (Job ID: {job_id if job_id else 'N/A'})")
-        if job_id and job_id in data['scheduled_jobs']: # Remove failed job
+        logger.error(f"❌ خطا در ارسال {media_type} (Job ID: {job_id if job_id else 'N/A'}): {e}", exc_info=True)
+        if job_id and job_id in data['scheduled_jobs']:
             del data['scheduled_jobs'][job_id]
-            data['stats']['scheduled'] = max(0, data['stats']['scheduled'] -1)
+            data['stats']['scheduled'] = max(0, data['stats']['scheduled'] - 1)
 
-
-def schedule_media_job(media_info, scheduled_time_dt):
-    """Schedules a media sending job."""
+def schedule_media_job(media_info, scheduled_time_dt_aware):
     job_id = str(uuid.uuid4())
     try:
-        scheduler.add_job(_send_media_action, 'date', run_date=scheduled_time_dt, args=[media_info, job_id], id=job_id)
-        data['scheduled_jobs'][job_id] = media_info
-        data['stats']['scheduled'] +=1
-        logger.info(f"🗓️ {media_info['type']} برای ارسال در {scheduled_time_dt.strftime('%Y-%m-%d %H:%M:%S')} زمانبندی شد. Job ID: {job_id}")
+        scheduler.add_job(_send_media_action, 'date', run_date=scheduled_time_dt_aware, args=[media_info, job_id], id=job_id)
+        data['scheduled_jobs'][job_id] = media_info # Store basic info for tracking
+        data['stats']['scheduled'] += 1
+        logger.info(f"🗓️ {media_info['type']} برای ارسال در {scheduled_time_dt_aware.strftime('%Y-%m-%d %H:%M:%S %Z')} زمانبندی شد. Job ID: {job_id}")
         return job_id
     except Exception as e:
-        logger.error(f"❌ خطا در زمانبندی {media_info['type']}: {e}")
+        logger.error(f"❌ خطا در زمانبندی {media_info['type']} (Job ID: {job_id}): {e}", exc_info=True)
         return None
 
 def send_media_after_timeout(msg_id_str):
-    """Sends media after a 15-second timeout if no caption/schedule command is given."""
-    time.sleep(15) # Original timeout
+    time.sleep(25)
     if msg_id_str in data['pending_media']:
+        pending_item = data['pending_media'][msg_id_str]
+        if pending_item.get('interactive_session_active', False):
+            logger.info(f"⏳ Timeout برای msg_id: {msg_id_str} لغو شد چون درگیر جلسه تعاملی است یا توسط آن مدیریت شده.")
+            return
+
         media_to_send = data['pending_media'].pop(msg_id_str)
         logger.info(f"⏳ ارسال خودکار {media_to_send['type']} پس از timeout برای msg_id: {msg_id_str}")
         _send_media_action(media_to_send)
 
+# --- Helper function to clean up sessions and pending media ---
+def cleanup_session_and_pending_media(chat_id, original_msg_id_to_check=None):
+    session_cleaned = False
+    pending_media_cleaned = False
 
-# --- هندلرهای ربات ---
-@bot.message_handler(commands=['schedule'])
-def handle_schedule_command(message):
-    if message.from_user.id != SOURCE_USER_ID:
-        logger.warning(f"⛔ دسترسی غیرمجاز به دستور /schedule از {message.from_user.first_name}")
-        return
+    if chat_id in user_schedule_sessions:
+        session = user_schedule_sessions[chat_id]
+        session_original_msg_id = session.get('original_msg_id')
 
-    parts = message.text.split(maxsplit=3) # /schedule YYYY-MM-DD HH:MM (optional text for text message)
-                                          # /schedule YYYY-MM-DD HH:MM (when replying to media)
+        if original_msg_id_to_check is None or session_original_msg_id == original_msg_id_to_check:
+            del user_schedule_sessions[chat_id]
+            session_cleaned = True
+            logger.info(f"🗑️ جلسه زمانبندی برای کاربر {chat_id} (پیام اصلی: {session_original_msg_id}) پاک شد.")
 
-    scheduled_item_info = None
-    custom_text_to_schedule = None
+            if session_original_msg_id:
+                pending_key = str(session_original_msg_id)
+                if pending_key in data['pending_media'] and \
+                   data['pending_media'][pending_key].get('interactive_session_active', False) and \
+                   data['pending_media'][pending_key].get('msg_id') == session_original_msg_id : # Ensure it's the exact item
+                    del data['pending_media'][pending_key]
+                    pending_media_cleaned = True
+                    logger.info(f"🗑️ آیتم {pending_key} از pending_media به دلیل پاک شدن جلسه، حذف شد.")
+        elif original_msg_id_to_check:
+             logger.warning(f"⚠️ تلاش برای پاک کردن جلسه کاربر {chat_id} اما original_msg_id ({original_msg_id_to_check}) با ID جلسه ({session_original_msg_id}) مطابقت نداشت.")
 
-    # Check if replying to a media message that is pending
-    if message.reply_to_message and str(message.reply_to_message.message_id) in data['pending_media']:
-        replied_msg_id_str = str(message.reply_to_message.message_id)
-        scheduled_item_info = data['pending_media'].pop(replied_msg_id_str)
-        logger.info(f"ℹ️ دستور /schedule برای رسانه در حال انتظار دریافت شد (msg_id: {replied_msg_id_str})")
-        # Caption for media can be included after time or taken from original media caption
-        if len(parts) > 3 : # /schedule YYYY-MM-DD HH:MM Caption for media
-             scheduled_item_info['caption'] = parts[3]
-        # else: use existing caption if any, or None
-
-    elif message.reply_to_message and message.reply_to_message.content_type == 'text' and len(parts) >= 3 :
-        # Scheduling a replied text message
-        # /schedule YYYY-MM-DD HH:MM (replying to a text)
-        # The replied text becomes the content
-        scheduled_item_info = {
-            'type': 'text',
-            'file_id': None, # Not applicable for text
-            'caption': message.reply_to_message.text, # The text to be sent
-            'msg_id': message.reply_to_message.message_id # For logging/tracking
-        }
-        logger.info(f"ℹ️ دستور /schedule برای متن ریپلای شده دریافت شد.")
-
-    elif not message.reply_to_message and len(parts) >= 4 and parts[0].lower() == '/schedule':
-        # /schedule YYYY-MM-DD HH:MM Your text message here
-        # Scheduling a new text message directly
-        custom_text_to_schedule = parts[3]
-        scheduled_item_info = {
-            'type': 'text',
-            'file_id': None,
-            'caption': custom_text_to_schedule, # The text to be sent
-            'msg_id': message.message_id # For logging/tracking
-        }
-        logger.info(f"ℹ️ دستور /schedule برای ارسال متن جدید دریافت شد.")
-
-    else:
-        bot.reply_to(message, "فرمت دستور صحیح نیست. \nبرای زمانبندی رسانه: به رسانه مورد نظر ریپلای کنید و بنویسید: `/schedule YYYY-MM-DD HH:MM` (کپشن اختیاری بعد از زمان)\nبرای زمانبندی متن جدید: `/schedule YYYY-MM-DD HH:MM متن پیام شما`\nبرای زمانبندی متن ریپلای شده: به متن مورد نظر ریپلای کنید و بنویسید: `/schedule YYYY-MM-DD HH:MM`")
-        return
-
-    if not scheduled_item_info:
-        bot.reply_to(message, "موردی برای زمانبندی یافت نشد. لطفاً طبق راهنما عمل کنید.")
-        return
-
-    try:
-        datetime_str = f"{parts[1]} {parts[2]}"
-        scheduled_time_dt = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M")
-
-        if scheduled_time_dt < datetime.now(scheduler.timezone):
-            bot.reply_to(message, "⚠️ زمان مشخص شده گذشته است. لطفاً یک زمان در آینده انتخاب کنید.")
-            # If it was a pending media, put it back, or it will be lost
-            if message.reply_to_message and str(message.reply_to_message.message_id) not in data['pending_media'] and scheduled_item_info['type'] != 'text':
-                 data['pending_media'][str(message.reply_to_message.message_id)] = scheduled_item_info
-            return
-
-        job_id = schedule_media_job(scheduled_item_info, scheduled_time_dt)
-        if job_id:
-            bot.reply_to(message, f"✅ {scheduled_item_info['type'].capitalize()} برای ارسال در {scheduled_time_dt.strftime('%Y-%m-%d %H:%M:%S')} زمانبندی شد.")
-        else:
-            bot.reply_to(message, f"❌ خطا در زمانبندی {scheduled_item_info['type']}.")
-            # If it was a pending media, put it back
-            if message.reply_to_message and str(message.reply_to_message.message_id) not in data['pending_media'] and scheduled_item_info['type'] != 'text':
-                 data['pending_media'][str(message.reply_to_message.message_id)] = scheduled_item_info
+    # If original_msg_id_to_check is provided, and session was not cleaned (maybe session was for a different msg_id)
+    # still try to clean the specific pending_media item if it exists and is marked interactive.
+    if original_msg_id_to_check and not pending_media_cleaned:
+        pending_key = str(original_msg_id_to_check)
+        if pending_key in data['pending_media'] and \
+           data['pending_media'][pending_key].get('interactive_session_active', False) and \
+           data['pending_media'][pending_key].get('msg_id') == original_msg_id_to_check:
+            del data['pending_media'][pending_key]
+            logger.info(f"🗑️ آیتم {pending_key} از pending_media (مستقل از جلسه) پاک شد.")
 
 
-    except ValueError:
-        bot.reply_to(message, "⚠️ فرمت تاریخ یا ساعت نامعتبر است. لطفاً از فرمت `YYYY-MM-DD HH:MM` استفاده کنید.")
-        # If it was a pending media, put it back
-        if message.reply_to_message and str(message.reply_to_message.message_id) not in data['pending_media'] and scheduled_item_info['type'] != 'text':
-             data['pending_media'][str(message.reply_to_message.message_id)] = scheduled_item_info
-    except Exception as e:
-        logger.error(f"🔥 خطای ناشناخته در پردازش دستور /schedule: {e}")
-        bot.reply_to(message, "❌ بروز خطا در پردازش درخواست شما.")
-        # If it was a pending media, put it back
-        if message.reply_to_message and str(message.reply_to_message.message_id) not in data['pending_media'] and scheduled_item_info['type'] != 'text':
-            data['pending_media'][str(message.reply_to_message.message_id)] = scheduled_item_info
-
-
+# --- Message Handler ---
 @bot.message_handler(content_types=['text', 'photo', 'voice', 'video', 'audio'])
 def handle_messages(message):
     if not bot_status['active']:
-        logger.warning("⏸️ ربات موقتاً غیرفعال است")
+        logger.warning("⏸️ ربات موقتاً غیرفعال است.")
         return
 
-    logger.info(
-        f"📩 پیام از {message.from_user.first_name} ({message.from_user.id}) | نوع: {message.content_type} | متن: {message.text if message.text else '[رسانه]'}"
-    )
+    logger.debug(f"📩 پیام دریافتی از {message.from_user.first_name} ({message.from_user.id}) | نوع: {message.content_type} | متن: {message.text if message.text else '[رسانه]'}")
 
     if message.from_user.id != SOURCE_USER_ID:
         logger.warning(f"⛔ دسترسی غیرمجاز از {message.from_user.first_name} ({message.from_user.id})")
         return
 
+    chat_id = message.chat.id
+
+    if message.text and message.text.lower() == '/cancel_schedule':
+        if chat_id in user_schedule_sessions:
+            logger.info(f"🚫 کاربر {chat_id} دستور /cancel_schedule را در حین جلسه ارسال کرد.")
+            handle_cancel_command_in_session(message, user_schedule_sessions[chat_id])
+        else:
+            bot.reply_to(message, "در حال حاضر جلسه زمانبندی فعالی برای لغو وجود ندارد.")
+        return
+
+    if chat_id in user_schedule_sessions:
+        current_stage = user_schedule_sessions[chat_id].get('stage')
+        expected_next_step_stages = ['awaiting_year', 'awaiting_month', 'awaiting_day',
+                                     'awaiting_hour', 'awaiting_minute', 'awaiting_caption']
+        if current_stage in expected_next_step_stages:
+            logger.debug(f"💬 پیام دریافتی در حین جلسه (مرحله: {current_stage}) برای {chat_id}. منتظر next_step_handler.")
+            return
+        elif current_stage == 'awaiting_initial_choice':
+             logger.info(f"💬 کاربر {chat_id} پیام جدیدی ارسال کرد در حالی که منتظر انتخاب گزینه inline بود. جلسه قبلی (msg_id: {user_schedule_sessions[chat_id].get('original_msg_id')}) لغو می‌شود.")
+             cleanup_session_and_pending_media(chat_id, user_schedule_sessions[chat_id].get('original_msg_id'))
     try:
-        # پردازش ریپلای (فقط برای تنظیم کپشن، نه زمانبندی)
-        if message.content_type == 'text' and message.reply_to_message:
-            replied = message.reply_to_message
-            replied_msg_id_str = str(replied.message_id)
+        original_msg_id = message.message_id
+        original_content_type = message.content_type
+        original_file_id = None
+        original_caption = None
+        text_content = None
 
-            if replied.content_type in ['photo', 'voice', 'video', 'audio'] and replied_msg_id_str in data['pending_media']:
-                # This is a caption for a pending media, not a schedule command
-                if not message.text.lower().startswith('/schedule'):
-                    data['pending_media'][replied_msg_id_str]['caption'] = message.text
-                    logger.info(f"💾 کپشن برای {replied.content_type} (msg_id: {replied_msg_id_str}) ذخیره شد.")
-                    # The timeout thread for this media is already running.
-                    # If user provides caption, it will be used by send_media_after_timeout.
-                    return
-                # If it starts with /schedule, it will be handled by handle_schedule_command
+        if original_content_type in ['photo', 'voice', 'video', 'audio']:
+            if original_content_type == 'photo': original_file_id = message.photo[-1].file_id
+            elif original_content_type == 'voice': original_file_id = message.voice.file_id
+            elif original_content_type == 'video': original_file_id = message.video.file_id
+            elif original_content_type == 'audio': original_file_id = message.audio.file_id
+            original_caption = message.caption
+        elif original_content_type == 'text':
+            text_content = message.text
+            if text_content.startswith('/'):
+                 logger.info(f"ℹ️ دستور {text_content} توسط handle_messages برای جلسه جدید نادیده گرفته شد.")
+                 return
+        else:
+            logger.warning(f"⚠️ نوع محتوای ناشناخته در handle_messages: {original_content_type}")
+            return
 
-        # پردازش رسانه (ذخیره برای ارسال فوری با تاخیر یا زمانبندی بعدی)
-        if message.content_type in ['photo', 'voice', 'video', 'audio']:
-            file_id = None
-            if message.content_type == 'photo':
-                file_id = message.photo[-1].file_id
-            elif message.content_type == 'voice':
-                file_id = message.voice.file_id
-            elif message.content_type == 'video':
-                file_id = message.video.file_id
-            elif message.content_type == 'audio':
-                file_id = message.audio.file_id
+        if not original_file_id and original_content_type != 'text':
+            logger.error(f"❌ file_id برای {original_content_type} (msg_id: {original_msg_id}) یافت نشد.")
+            return
 
-            if file_id:
-                media_info = {
-                    'type': message.content_type,
-                    'file_id': file_id,
-                    'caption': message.caption, # Original caption
-                    'msg_id': message.message_id # Original message ID
-                }
-                # Store in pending_media, a thread will try to send it after timeout
-                # if no /schedule command (with reply) or caption (with reply) is received.
-                data['pending_media'][str(message.message_id)] = media_info
+        if chat_id in user_schedule_sessions: # Should have been cleaned if stage was awaiting_initial_choice
+            logger.warning(f"⚠️ جلسه زمانبندی قبلی برای کاربر {chat_id} (پیام {user_schedule_sessions[chat_id].get('original_msg_id')}) به دلیل پیام جدید، پاکسازی شد.")
+            cleanup_session_and_pending_media(chat_id, user_schedule_sessions[chat_id].get('original_msg_id'))
 
-                # Start the timeout thread
-                threading.Thread(target=send_media_after_timeout, args=(str(message.message_id),)).start()
-                logger.info(f"📥 {message.content_type} (msg_id: {message.message_id}) برای ارسال با تاخیر یا زمانبندی بعدی ذخیره شد.")
-            else:
-                logger.error(f"❌ file_id برای {message.content_type} (msg_id: {message.message_id}) یافت نشد")
+        pending_media_key = str(original_msg_id)
+        media_data_for_session = {
+            'type': original_content_type,
+            'file_id': original_file_id,
+            'caption': original_caption,
+            'text_content': text_content,
+            'msg_id': original_msg_id,
+            'interactive_session_active': True
+        }
+        data['pending_media'][pending_media_key] = media_data_for_session
 
-        elif message.content_type == 'text':
-            # Text messages are sent immediately unless they are a command
-            # Normal text messages (not commands, not replies to set caption)
-            if not message.text.startswith('/'):
-                 # Send text immediately
-                final_text = add_source_text(message.text)
-                bot.send_message(DESTINATION_CHAT_ID, final_text)
-                data['stats']['text'] += 1
-                data['stats']['total'] += 1
-                logger.info("📝 متن ارسال شد")
+        user_schedule_sessions[chat_id] = {
+            'stage': 'awaiting_initial_choice',
+            'original_msg_id': original_msg_id,
+            'original_chat_id': chat_id, # Store chat_id for validation in next_step_handlers
+            'media_info': media_data_for_session.copy()
+        }
+        logger.info(f"➕ جلسه زمانبندی جدید برای {chat_id}, پیام اصلی {original_msg_id} آغاز شد. مرحله: awaiting_initial_choice")
+
+        markup = InlineKeyboardMarkup(row_width=1)
+        btn_schedule_shamsi = InlineKeyboardButton("📅 زمان‌بندی شمسی", callback_data=f"sch_shamsi_start_{original_msg_id}")
+        btn_send_delayed = InlineKeyboardButton("⏰ ارسال با تأخیر/کپشن", callback_data=f"sch_send_delayed_{original_msg_id}")
+        btn_cancel_op = InlineKeyboardButton("❌ لغو عملیات", callback_data=f"sch_cancel_op_{original_msg_id}")
+        markup.add(btn_schedule_shamsi, btn_send_delayed, btn_cancel_op)
+
+        bot.reply_to(message, "چه کاری می‌خواهید با این پیام انجام دهید؟", reply_markup=markup)
 
     except Exception as e:
-        logger.error(f"🔥 خطا در handle_messages: {e}")
+        logger.error(f"🔥 خطا در handle_messages (بخش تعاملی جدید): {e}", exc_info=True)
+        cleanup_session_and_pending_media(chat_id)
+        bot.reply_to(message, "متاسفانه در پردازش پیام شما خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+
+# --- Callback Query Handler ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('sch_'))
+def handle_schedule_callbacks(call):
+    chat_id = call.message.chat.id
+    bot_message_id = call.message.message_id
+
+    try:
+        bot.answer_callback_query(call.id)
+    except Exception as e:
+        logger.warning(f"⚠️Could not answer callback query {call.id}: {e}")
+
+    try:
+        parts = call.data.split('_')
+        action_type = parts[1]
+        action_verb = parts[2]
+        original_msg_id = int(parts[3])
+
+        session = user_schedule_sessions.get(chat_id)
+
+        if not session or session.get('original_msg_id') != original_msg_id:
+            logger.warning(f"⚠️ جلسه نامعتبر/منقضی برای callback {call.data} از {chat_id}. Session: {session}, CB original_msg_id: {original_msg_id}")
+            bot.edit_message_text("این گزینه دیگر معتبر نیست.", chat_id, bot_message_id, reply_markup=None)
+            cleanup_session_and_pending_media(chat_id, original_msg_id)
+            return
+
+        logger.info(f"📞 Callback: {call.data}, Stage: {session.get('stage')}, User: {chat_id}, Original Msg: {original_msg_id}")
+
+        try:
+            bot.edit_message_reply_markup(chat_id, bot_message_id, reply_markup=None)
+        except Exception as e:
+            logger.warning(f"⚠️ نتوانست دکمه‌های inline را ویرایش کند (msg {bot_message_id}): {e}")
+
+        pending_media_key = str(original_msg_id)
+
+        if action_type == "shamsi" and action_verb == "start":
+            if session['stage'] == 'awaiting_initial_choice':
+                session['stage'] = 'awaiting_year'
+                logger.info(f"🔄->{session['stage']} برای {chat_id}, msg {original_msg_id}")
+                bot.edit_message_text("📅 **زمان‌بندی شمسی**\nلطفاً سال شمسی را وارد کنید (مثلاً ۱۴۰۳).\nبرای لغو، /cancel_schedule را ارسال کنید.", chat_id, bot_message_id)
+                bot.register_next_step_handler_by_chat_id(chat_id, process_shamsi_year_step, session)
+            else:
+                handle_invalid_stage(chat_id, bot_message_id, session, "shamsi_start")
+
+        elif action_type == "send" and action_verb == "delayed":
+            bot.edit_message_text(f"درخواست شما برای 'ارسال با تاخیر/کپشن' دریافت شد.", chat_id, bot_message_id)
+            if pending_media_key in data['pending_media']:
+                data['pending_media'][pending_media_key]['interactive_session_active'] = False
+                media_info = data['pending_media'][pending_media_key]
+
+                if media_info['type'] == 'text':
+                    logger.info(f"📝 ارسال فوری متن (msg {original_msg_id}) توسط {chat_id} با گزینه 'delayed'.")
+                    _send_media_action(media_info)
+                    if pending_media_key in data['pending_media']: del data['pending_media'][pending_media_key]
+                else:
+                    bot.send_message(chat_id, f"آماده برای ارسال {media_info['type']}.\n"
+                                             f"با ریپلای به پیام اصلی خودتان، کپشن اضافه کنید.\n"
+                                             f"وگرنه پس از ۲۵ ثانیه ارسال می‌شود.")
+                logger.info(f"⏰ 'ارسال با تاخیر/کپشن' برای msg {original_msg_id} توسط {chat_id} انتخاب شد.")
+            else:
+                logger.error(f"خطا: اطلاعات پیام اصلی {pending_media_key} یافت نشد برای send_delayed.")
+                bot.send_message(chat_id, "خطا: اطلاعات پیام اصلی یافت نشد.")
+            cleanup_session_and_pending_media(chat_id, original_msg_id)
+
+        elif action_type == "cancel" and action_verb == "op":
+            bot.edit_message_text("عملیات توسط شما لغو شد.", chat_id, bot_message_id)
+            logger.info(f"❌ عملیات برای msg {original_msg_id} توسط {chat_id} (دکمه لغو) لغو شد.")
+            cleanup_session_and_pending_media(chat_id, original_msg_id)
+
+    except Exception as e:
+        logger.error(f"🔥 خطا در handle_schedule_callbacks: {e}", exc_info=True)
+        try:
+            bot.edit_message_text("خطایی در پردازش درخواست شما رخ داد.", call.message.chat.id, call.message.message_id, reply_markup=None)
+        except:
+            bot.send_message(call.message.chat.id, "خطایی در پردازش درخواست شما رخ داد.")
+        cleanup_session_and_pending_media(call.message.chat.id)
 
 
-# --- راه‌اندازی سرور مدیریت ---
+def handle_invalid_stage(chat_id, bot_message_id, session_data, attempted_action=""):
+    stage = session_data.get('stage', 'نامشخص')
+    original_msg_id = session_data.get('original_msg_id', 'نامشخص')
+    logger.warning(f"⚠️ اقدام '{attempted_action}' در وضعیت نامعتبر {stage} برای کاربر {chat_id}, پیام اصلی {original_msg_id}")
+    try:
+        bot.edit_message_text("خطای داخلی: عملیات در وضعیت فعلی مجاز نیست. لطفاً دوباره تلاش کنید.", chat_id, bot_message_id)
+    except Exception: # if editing fails
+        bot.send_message(chat_id, "خطای داخلی: عملیات در وضعیت فعلی مجاز نیست. لطفاً دوباره تلاش کنید.")
+    cleanup_session_and_pending_media(chat_id, original_msg_id)
+
+
+def handle_cancel_command_in_session(message, session_data):
+    chat_id = message.chat.id
+    original_msg_id = session_data.get('original_msg_id')
+
+    logger.info(f"↩️ کاربر {chat_id} دستور /cancel_schedule را در حین جلسه (پیام اصلی: {original_msg_id}) ارسال کرد.")
+    bot.reply_to(message, "عملیات زمانبندی فعلی لغو شد.")
+    cleanup_session_and_pending_media(chat_id, original_msg_id)
+
+# --- Next Step Handler Functions ---
+def process_shamsi_year_step(message, session_data):
+    chat_id = message.chat.id
+    if not session_data or session_data.get('stage') != 'awaiting_year' or session_data.get('original_chat_id') != chat_id :
+        logger.warning(f"⚠️ process_shamsi_year_step: جلسه نامعتبر یا مرحله ({session_data.get('stage') if session_data else 'N/A'}) مطابقت ندارد. کاربر: {chat_id}")
+        if session_data and session_data.get('original_chat_id') == chat_id: # Only cleanup if it's this user's session
+             cleanup_session_and_pending_media(chat_id, session_data.get('original_msg_id'))
+        # Do not send message if session_data is None or not for this user, to avoid spamming.
+        return
+
+    if message.text and message.text.lower() == '/cancel_schedule':
+        handle_cancel_command_in_session(message, session_data)
+        return
+
+    year_text = message.text.strip()
+    try:
+        year = int(year_text)
+        if not (1300 <= year <= 1500):
+            raise ValueError("سال شمسی باید بین ۱۳۰۰ تا ۱۵۰۰ باشد.")
+
+        session_data['s_year'] = year
+        session_data['stage'] = 'awaiting_month'
+        logger.info(f"🔄 کاربر {chat_id} سال را وارد کرد: {year}. تغییر وضعیت به: {session_data['stage']}")
+        bot.reply_to(message, f"سال شمسی: {year}\n👍 اکنون ماه شمسی را وارد کنید (۱-۱۲).\nبرای لغو، /cancel_schedule را ارسال کنید.")
+        bot.register_next_step_handler_by_chat_id(chat_id, process_shamsi_month_step, session_data)
+    except ValueError as e:
+        logger.warning(f"⚠️ ورودی سال نامعتبر '{year_text}' از کاربر {chat_id}: {e}")
+        bot.reply_to(message, f"ورودی سال نامعتبر است: {e}. لطفاً یک سال شمسی معتبر (مانند ۱۴۰۳) وارد کنید یا با /cancel_schedule لغو کنید.")
+        bot.register_next_step_handler_by_chat_id(chat_id, process_shamsi_year_step, session_data)
+
+def process_shamsi_month_step(message, session_data):
+    chat_id = message.chat.id
+    if not session_data or session_data.get('stage') != 'awaiting_month' or session_data.get('original_chat_id') != chat_id:
+        logger.warning(f"⚠️ process_shamsi_month_step: جلسه/مرحله نامعتبر. جلسه: {session_data}, کاربر: {chat_id}")
+        if session_data and session_data.get('original_chat_id') == chat_id:
+             cleanup_session_and_pending_media(chat_id, session_data.get('original_msg_id'))
+        return
+
+    if message.text and message.text.lower() == '/cancel_schedule':
+        handle_cancel_command_in_session(message, session_data)
+        return
+
+    month_text = message.text.strip()
+    try:
+        month = int(month_text)
+        if not (1 <= month <= 12):
+            raise ValueError("ماه شمسی باید بین ۱ تا ۱۲ باشد.")
+
+        session_data['s_month'] = month
+        session_data['stage'] = 'awaiting_day'
+        logger.info(f"🔄 کاربر {chat_id} ماه را وارد کرد: {month}. تغییر وضعیت به: {session_data['stage']}")
+        bot.reply_to(message, f"ماه شمسی: {month}\n👍 اکنون روز را وارد کنید (۱-۳۱).\nبرای لغو، /cancel_schedule را ارسال کنید.")
+        bot.register_next_step_handler_by_chat_id(chat_id, process_shamsi_day_step, session_data)
+    except ValueError as e:
+        logger.warning(f"⚠️ ورودی ماه نامعتبر '{month_text}' از کاربر {chat_id}: {e}")
+        bot.reply_to(message, f"ورودی ماه نامعتبر است: {e}. لطفاً یک عدد بین ۱ تا ۱۲ وارد کنید یا با /cancel_schedule لغو کنید.")
+        bot.register_next_step_handler_by_chat_id(chat_id, process_shamsi_month_step, session_data)
+
+def process_shamsi_day_step(message, session_data):
+    chat_id = message.chat.id
+    if not session_data or session_data.get('stage') != 'awaiting_day' or session_data.get('original_chat_id') != chat_id:
+        logger.warning(f"⚠️ process_shamsi_day_step: جلسه/مرحله نامعتبر. جلسه: {session_data}, کاربر: {chat_id}")
+        if session_data and session_data.get('original_chat_id') == chat_id:
+            cleanup_session_and_pending_media(chat_id, session_data.get('original_msg_id'))
+        return
+
+    if message.text and message.text.lower() == '/cancel_schedule':
+        handle_cancel_command_in_session(message, session_data)
+        return
+
+    day_text = message.text.strip()
+    try:
+        day = int(day_text)
+        s_year = session_data['s_year']
+        s_month = session_data['s_month']
+
+        jdatetime.date(s_year, s_month, day) # Validate day using jdatetime
+
+        session_data['s_day'] = day
+        session_data['stage'] = 'awaiting_hour'
+        logger.info(f"🔄 کاربر {chat_id} روز را وارد کرد: {day}. تغییر وضعیت به: {session_data['stage']}")
+        bot.reply_to(message, f"روز شمسی: {day}\n👍 اکنون ساعت را وارد کنید (۰۰-۲۳).\nبرای لغو، /cancel_schedule را ارسال کنید.")
+        bot.register_next_step_handler_by_chat_id(chat_id, process_shamsi_hour_step, session_data)
+    except ValueError as e:
+        logger.warning(f"⚠️ ورودی روز نامعتبر '{day_text}' از کاربر {chat_id}: {e}")
+        bot.reply_to(message, f"ورودی روز نامعتبر است: {e}. لطفاً یک روز معتبر وارد کنید یا با /cancel_schedule لغو کنید.")
+        bot.register_next_step_handler_by_chat_id(chat_id, process_shamsi_day_step, session_data)
+
+
+def process_shamsi_hour_step(message, session_data):
+    chat_id = message.chat.id
+    if not session_data or session_data.get('stage') != 'awaiting_hour' or session_data.get('original_chat_id') != chat_id:
+        logger.warning(f"⚠️ process_shamsi_hour_step: جلسه/مرحله نامعتبر. جلسه: {session_data}, کاربر: {chat_id}")
+        if session_data and session_data.get('original_chat_id') == chat_id:
+            cleanup_session_and_pending_media(chat_id, session_data.get('original_msg_id'))
+        return
+
+    if message.text and message.text.lower() == '/cancel_schedule':
+        handle_cancel_command_in_session(message, session_data)
+        return
+
+    hour_text = message.text.strip()
+    try:
+        hour = int(hour_text)
+        if not (0 <= hour <= 23):
+            raise ValueError("ساعت باید بین ۰۰ تا ۲۳ باشد.")
+
+        session_data['s_hour'] = hour
+        session_data['stage'] = 'awaiting_minute'
+        logger.info(f"🔄 کاربر {chat_id} ساعت را وارد کرد: {hour}. تغییر وضعیت به: {session_data['stage']}")
+        bot.reply_to(message, f"ساعت: {hour:02d}\n👍 اکنون دقیقه را وارد کنید (۰۰-۵۹).\nبرای لغو، /cancel_schedule را ارسال کنید.")
+        bot.register_next_step_handler_by_chat_id(chat_id, process_shamsi_minute_step, session_data)
+    except ValueError as e:
+        logger.warning(f"⚠️ ورودی ساعت نامعتبر '{hour_text}' از کاربر {chat_id}: {e}")
+        bot.reply_to(message, f"ورودی ساعت نامعتبر است: {e}. لطفاً یک عدد بین ۰۰ تا ۲۳ وارد کنید یا با /cancel_schedule لغو کنید.")
+        bot.register_next_step_handler_by_chat_id(chat_id, process_shamsi_hour_step, session_data)
+
+def process_shamsi_minute_step(message, session_data):
+    chat_id = message.chat.id
+    if not session_data or session_data.get('stage') != 'awaiting_minute' or session_data.get('original_chat_id') != chat_id:
+        logger.warning(f"⚠️ process_shamsi_minute_step: جلسه/مرحله نامعتبر. جلسه: {session_data}, کاربر: {chat_id}")
+        if session_data and session_data.get('original_chat_id') == chat_id:
+            cleanup_session_and_pending_media(chat_id, session_data.get('original_msg_id'))
+        return
+
+    if message.text and message.text.lower() == '/cancel_schedule':
+        handle_cancel_command_in_session(message, session_data)
+        return
+
+    minute_text = message.text.strip()
+    try:
+        minute = int(minute_text)
+        if not (0 <= minute <= 59):
+            raise ValueError("دقیقه باید بین ۰۰ تا ۵۹ باشد.")
+
+        session_data['s_minute'] = minute
+
+        s_year = session_data['s_year']
+        s_month = session_data['s_month']
+        s_day = session_data['s_day']
+        s_hour = session_data['s_hour']
+
+        shamsi_dt = jdatetime.datetime(s_year, s_month, s_day, s_hour, minute)
+        gregorian_dt_naive = shamsi_dt.togregorian()
+
+        gregorian_dt_aware = scheduler.timezone.localize(gregorian_dt_naive)
+        current_aware_time = datetime.now(scheduler.timezone)
+
+        if gregorian_dt_aware < current_aware_time:
+            bot.reply_to(message, "⚠️ تاریخ و زمان وارد شده مربوط به گذشته است. لطفاً دوباره از ابتدا سال را وارد کنید.")
+            logger.warning(f"⚠️ تاریخ گذشته ({shamsi_dt.strftime('%Y/%m/%d %H:%M')}) توسط {chat_id} انتخاب شد.")
+            session_data['stage'] = 'awaiting_year'
+            bot.send_message(chat_id, "لطفاً سال شمسی را مجدداً وارد کنید (مثلاً ۱۴۰۳):\nبرای لغو، /cancel_schedule را ارسال کنید.")
+            bot.register_next_step_handler_by_chat_id(chat_id, process_shamsi_year_step, session_data)
+            return
+
+        session_data['gregorian_datetime_aware'] = gregorian_dt_aware
+        formatted_shamsi_dt = shamsi_dt.strftime("%Y/%m/%d ساعت %H:%M")
+        logger.info(f"📅 تاریخ و زمان کامل شمسی ({formatted_shamsi_dt}) برای {chat_id} دریافت شد.")
+
+        media_type = session_data['media_info']['type']
+        if media_type != 'text':
+            session_data['stage'] = 'awaiting_caption'
+            logger.info(f"🔄->{session_data['stage']} برای {chat_id}")
+            bot.reply_to(message, f"تاریخ تنظیم شد: {formatted_shamsi_dt}\n"
+                                 f"👍 حالا کپشن مورد نظر را برای {media_type} ارسال کنید. "
+                                 f"اگر کپشن نمی‌خواهید، کلمه `ندارد` را ارسال کنید.\n"
+                                 f"برای لغو، /cancel_schedule را ارسال کنید.")
+            bot.register_next_step_handler_by_chat_id(chat_id, process_caption_step, session_data)
+        else:
+            session_data['media_info']['caption'] = session_data['media_info']['text_content']
+            finalize_schedule(message, session_data)
+
+    except ValueError as e:
+        logger.warning(f"⚠️ ورودی دقیقه/تاریخ نامعتبر '{minute_text}' از کاربر {chat_id}: {e}")
+        bot.reply_to(message, f"ورودی دقیقه یا تاریخ نامعتبر است: {e}. لطفاً از ابتدا سال را وارد کنید یا با /cancel_schedule لغو کنید.")
+        session_data['stage'] = 'awaiting_year'
+        bot.send_message(chat_id, "خطا در پردازش تاریخ/دقیقه. لطفاً سال شمسی را مجدداً وارد کنید (مثلاً ۱۴۰۳):\nبرای لغو، /cancel_schedule را ارسال کنید.")
+        bot.register_next_step_handler_by_chat_id(chat_id, process_shamsi_year_step, session_data)
+
+def process_caption_step(message, session_data):
+    chat_id = message.chat.id
+    if not session_data or session_data.get('stage') != 'awaiting_caption' or session_data.get('original_chat_id') != chat_id:
+        logger.warning(f"⚠️ process_caption_step: جلسه/مرحله نامعتبر. جلسه: {session_data}, کاربر: {chat_id}")
+        if session_data and session_data.get('original_chat_id') == chat_id:
+            cleanup_session_and_pending_media(chat_id, session_data.get('original_msg_id'))
+        return
+
+    if message.text and message.text.lower() == '/cancel_schedule':
+        handle_cancel_command_in_session(message, session_data)
+        return
+
+    caption_text = message.text
+    if caption_text.strip().lower() == 'ندارد':
+        session_data['media_info']['caption'] = None
+        logger.info(f"💬 کاربر {chat_id} برای رسانه کپشنی انتخاب نکرد ('ندارد').")
+    else:
+        session_data['media_info']['caption'] = caption_text
+        logger.info(f"💬 کپشن '{caption_text[:50]}...' برای {chat_id} دریافت شد.")
+
+    finalize_schedule(message, session_data)
+
+def finalize_schedule(message, session_data):
+    chat_id = message.chat.id
+    original_msg_id = session_data.get('original_msg_id')
+    try:
+        media_to_schedule = session_data['media_info']
+        gregorian_dt_aware = session_data['gregorian_datetime_aware']
+
+        job_id = schedule_media_job(media_to_schedule, gregorian_dt_aware)
+
+        s_year, s_month, s_day, s_hour, s_minute = session_data['s_year'], session_data['s_month'], session_data['s_day'], session_data['s_hour'], session_data['s_minute']
+        shamsi_dt_str_display = f"{s_year}/{s_month:02d}/{s_day:02d} ساعت {s_hour:02d}:{s_minute:02d}"
+
+        if job_id:
+            bot.reply_to(message, f"✅ {media_to_schedule['type'].capitalize()} با موفقیت برای تاریخ {shamsi_dt_str_display} زمان‌بندی شد.")
+            logger.info(f"✅ {media_to_schedule['type']} برای {chat_id} (پیام اصلی: {original_msg_id}) در {shamsi_dt_str_display} (Job ID: {job_id}) زمانبندی شد.")
+        else:
+            bot.reply_to(message, f"❌ متاسفانه در زمان‌بندی {media_to_schedule['type']} خطایی رخ داد. لطفاً با ادمین تماس بگیرید.")
+            logger.error(f"❌ خطا در ایجاد جاب زمانبندی برای {chat_id} (پیام اصلی: {original_msg_id}) در {shamsi_dt_str_display}.")
+
+    except Exception as e:
+        logger.error(f"🔥 خطای نهایی در زمانبندی برای کاربر {chat_id} (پیام اصلی: {original_msg_id}): {e}", exc_info=True)
+        bot.reply_to(message, "خطای غیرمنتظره‌ای در هنگام نهایی کردن زمان‌بندی رخ داد. لطفاً با ادمین تماس بگیرید.")
+    finally:
+        cleanup_session_and_pending_media(chat_id, original_msg_id)
+
+# --- Flask Web Routes ---
 def login_required(f):
-
     @wraps(f)
-    def decorated(*args, **kwargs):
+    def decorated_function(*args, **kwargs):
         if not session.get('logged_in'):
             return redirect('/login')
         return f(*args, **kwargs)
-
-    return decorated
-
+    return decorated_function
 
 @app.route("/")
 def home():
     return redirect("/dashboard")
 
-
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        if request.form['username'] == ADMIN_USERNAME and request.form[
-                'password'] == ADMIN_PASSWORD:
+        if request.form['username'] == ADMIN_USERNAME and request.form['password'] == ADMIN_PASSWORD:
             session['logged_in'] = True
             return redirect("/dashboard")
         return render_template("login.html", error="اطلاعات ورود نامعتبر")
     return render_template("login.html")
-
 
 @app.route("/logout")
 def logout():
     session.clear()
     return redirect("/login")
 
-
 @app.route("/dashboard")
 @login_required
 def dashboard():
     try:
-        logs = subprocess.check_output(['tail', '-n', '30',
-                                        'bot.log']).decode('utf-8')
-    except:
-        logs = "لاگ در دسترس نیست"
+        # Ensure bot.log path is correct if running in Docker vs locally
+        log_file_path = "bot.log"
+        logs_output = subprocess.check_output(['tail', '-n', '50', log_file_path]).decode('utf-8')
+    except Exception as e:
+        logger.error(f"Error reading log file for dashboard: {e}")
+        logs_output = "لاگ در دسترس نیست یا خطایی در خواندن آن رخ داده است."
 
+    # Update bot_status with latest counts
     bot_status.update({
         'forward_count': data['stats']['total'],
-        'logs': logs,
-        'message_stats': data['stats'],
-        'pending_count': len(data['pending_media']),
-        'scheduled_count': data['stats']['scheduled'] # Add scheduled count to dashboard
+        'logs': logs_output,
+        'message_stats': data['stats'], # This now includes 'scheduled'
+        'pending_count': len(data['pending_media']), # Media waiting for timeout/caption OR in interactive setup
+        'scheduled_count': data['stats']['scheduled'], # Number of active APScheduler jobs
+        'active_sessions': len(user_schedule_sessions) # Number of users in interactive scheduling
     })
     return render_template("dashboard.html", status=bot_status)
 
-
 @app.route("/update-signature", methods=["POST"])
 @login_required
-def update_signature():
+def update_signature_route():
     bot_status["signature"] = "\n\n" + request.form['signature'].strip()
+    logger.info(f"امضا به‌روزرسانی شد: {bot_status['signature']}")
     return redirect("/dashboard")
-
 
 @app.route("/toggle-bot", methods=["POST"])
 @login_required
-def toggle_bot():
+def toggle_bot_route():
     bot_status["active"] = not bot_status["active"]
-    status = "فعال" if bot_status["active"] else "غیرفعال"
-    logger.info(f"🔌 وضعیت ربات تغییر کرد به: {status}")
+    status_text = "فعال" if bot_status["active"] else "غیرفعال"
+    logger.info(f"🔌 وضعیت ربات تغییر کرد به: {status_text}")
     return redirect("/dashboard")
 
+def run_bot_polling():
+    logger.info("🤖 ربات شروع به کار کرد (infinity_polling)")
+    try:
+        bot.infinity_polling(logger_level=logging.INFO, skip_pending=True)
+    except Exception as e:
+        logger.critical(f"🚨 خطای مرگبار در infinity_polling ربات: {e}", exc_info=True)
+        # Potentially restart or alert admin
+        # For now, just log and the thread will exit.
+        # Consider more robust error handling for production.
 
-def run_bot():
-    logger.info("🤖 ربات شروع به کار کرد")
-    bot.infinity_polling()
+def run_flask_server():
+    logger.info("🌐 سرور Flask در حال اجرا در http://0.0.0.0:8080")
+    app.run(host='0.0.0.0', port=8080, debug=False) # debug=False for production
 
-
-def run_server():
-    app.run(host='0.0.0.0', port=8080)
-
-def shutdown_scheduler():
-    logger.info("🛑 متوقف کردن scheduler...")
+def shutdown_app_scheduler():
+    logger.info("🛑 متوقف کردن APScheduler...")
     if scheduler.running:
-        scheduler.shutdown()
+        try:
+            scheduler.shutdown(wait=True) # wait for jobs to complete
+            logger.info("✅ APScheduler متوقف شد.")
+        except Exception as e:
+            logger.error(f"❌ خطا در متوقف کردن APScheduler: {e}")
 
 if __name__ == "__main__":
-    import threading
-    import atexit
+    atexit.register(shutdown_app_scheduler)
 
-    # Register scheduler shutdown hook
-    atexit.register(shutdown_scheduler)
+    flask_thread = Thread(target=run_flask_server, daemon=True)
+    bot_thread = Thread(target=run_bot_polling, daemon=True)
 
-    threading.Thread(target=run_bot, daemon=True).start()
-    run_server()
+    flask_thread.start()
+    bot_thread.start()
+
+    # Keep main thread alive to allow daemon threads to run
+    # and to catch KeyboardInterrupt for graceful shutdown.
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("🛑 دریافت دستور KeyboardInterrupt. در حال خاموش کردن...")
+    finally:
+        # shutdown_app_scheduler() will be called by atexit
+        logger.info("👋 برنامه خاتمه یافت.")
+
+# Ensure all handlers are defined before bot.polling() is called if __name__ == "__main__"
+# which is handled by placing them before the main block.
