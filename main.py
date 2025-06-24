@@ -12,6 +12,7 @@ from datetime import datetime
 import uuid # For unique job IDs
 import jdatetime
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import atexit
 
 # تنظیمات اولیه
 app = Flask(__name__)
