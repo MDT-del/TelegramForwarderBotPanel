@@ -499,12 +499,20 @@ def process_shamsi_minute_step(message, session_data):
         shamsi_dt = jdatetime.datetime(s_year, s_month, s_day, s_hour, minute)
         gregorian_dt_naive = shamsi_dt.togregorian()
 
-        gregorian_dt_aware = scheduler.timezone.localize(gregorian_dt_naive)
-        current_aware_time = datetime.now(scheduler.timezone)
+        # Correct way to make naive datetime aware with zoneinfo
+        if scheduler.timezone:
+            gregorian_dt_aware = gregorian_dt_naive.replace(tzinfo=scheduler.timezone)
+            current_aware_time = datetime.now(scheduler.timezone)
+        else:
+            # Fallback if scheduler.timezone is None (should not happen if initialized correctly)
+            gregorian_dt_aware = gregorian_dt_naive
+            current_aware_time = datetime.now()
+            logger.warning("⚠️ scheduler.timezone تنظیم نشده است. از زمان naive برای مقایسه استفاده می‌شود.")
+
 
         if gregorian_dt_aware < current_aware_time:
             bot.reply_to(message, "⚠️ تاریخ و زمان وارد شده مربوط به گذشته است. لطفاً دوباره از ابتدا سال را وارد کنید.")
-            logger.warning(f"⚠️ تاریخ گذشته ({shamsi_dt.strftime('%Y/%m/%d %H:%M')}) توسط {chat_id} انتخاب شد.")
+            logger.warning(f"⚠️ تاریخ گذشته ({shamsi_dt.strftime('%Y/%m/%d %H:%M')}) توسط {chat_id} انتخاب شد. زمان فعلی: {current_aware_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
             session_data['stage'] = 'awaiting_year'
             bot.send_message(chat_id, "لطفاً سال شمسی را مجدداً وارد کنید (مثلاً ۱۴۰۳):\nبرای لغو، /cancel_schedule را ارسال کنید.")
             bot.register_next_step_handler_by_chat_id(chat_id, process_shamsi_year_step, session_data)
