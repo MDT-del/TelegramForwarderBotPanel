@@ -509,10 +509,17 @@ def process_shamsi_minute_step(message, session_data):
             current_aware_time = datetime.now()
             logger.warning("⚠️ scheduler.timezone تنظیم نشده است. از زمان naive برای مقایسه استفاده می‌شود.")
 
+        # --- Enhanced Debug Logging ---
+        logger.info(f"DEBUG: Shamsi Input: {s_year}/{s_month}/{s_day} {s_hour}:{minute}")
+        logger.info(f"DEBUG: Gregorian Naive from Shamsi: {gregorian_dt_naive.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"DEBUG: Gregorian Aware (Target): {gregorian_dt_aware.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"DEBUG: Current Aware Time ({scheduler.timezone}): {current_aware_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"DEBUG: Comparison: Is {gregorian_dt_aware.isoformat()} < {current_aware_time.isoformat()} ?")
+        # --- End Enhanced Debug Logging ---
 
         if gregorian_dt_aware < current_aware_time:
             bot.reply_to(message, "⚠️ تاریخ و زمان وارد شده مربوط به گذشته است. لطفاً دوباره از ابتدا سال را وارد کنید.")
-            logger.warning(f"⚠️ تاریخ گذشته ({shamsi_dt.strftime('%Y/%m/%d %H:%M')}) توسط {chat_id} انتخاب شد. زمان فعلی: {current_aware_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            logger.warning(f"⚠️ تاریخ گذشته ({shamsi_dt.strftime('%Y/%m/%d %H:%M')}) توسط {chat_id} انتخاب شد. زمان هدف: {gregorian_dt_aware.strftime('%Y-%m-%d %H:%M:%S %Z')}, زمان فعلی: {current_aware_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
             session_data['stage'] = 'awaiting_year'
             bot.send_message(chat_id, "لطفاً سال شمسی را مجدداً وارد کنید (مثلاً ۱۴۰۳):\nبرای لغو، /cancel_schedule را ارسال کنید.")
             bot.register_next_step_handler_by_chat_id(chat_id, process_shamsi_year_step, session_data)
