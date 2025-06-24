@@ -197,6 +197,28 @@ def handle_messages(message):
              logger.info(f"💬 کاربر {chat_id} پیام جدیدی ارسال کرد در حالی که منتظر انتخاب گزینه inline بود. جلسه قبلی (msg_id: {user_schedule_sessions[chat_id].get('original_msg_id')}) لغو می‌شود.")
              cleanup_session_and_pending_media(chat_id, user_schedule_sessions[chat_id].get('original_msg_id'))
     try:
+        # --- مدیریت ریپلای برای کپشن (خارج از جلسه تعاملی) ---
+        if message.content_type == 'text' and message.reply_to_message:
+            replied_msg = message.reply_to_message
+            replied_msg_id_str = str(replied_msg.message_id)
+
+            if replied_msg_id_str in data['pending_media']:
+                pending_item = data['pending_media'][replied_msg_id_str]
+                # Only if interactive session is NOT active for this item, treat as normal caption
+                if not pending_item.get('interactive_session_active', False): # Important check
+                    if replied_msg.content_type in ['photo', 'voice', 'video', 'audio']:
+                        pending_item['caption'] = message.text
+                        logger.info(f"💾 کپشن عادی برای {pending_item['type']} (msg_id: {replied_msg_id_str}) ذخیره شد: '{message.text[:30]}...'")
+                        try:
+                            bot.reply_to(message, "کپشن برای ارسال با تاخیر ثبت شد.")
+                        except Exception as e_reply:
+                            logger.warning(f"Could not send caption confirmation reply: {e_reply}")
+                        return # Crucial: stop processing this message further if it was a caption
+                    # else: # Reply to a text message in pending_media (not an interactive session) - currently no specific action
+                # else: # interactive_session_active is true, let next_step_handler or other logic handle it
+            # else: # Reply to a message not in pending_media, or not relevant to captioning. Fall through.
+
+        # --- ادامه پردازش پیام اگر کپشن نبود ---
         original_msg_id = message.message_id
         original_content_type = message.content_type
         original_file_id = None
