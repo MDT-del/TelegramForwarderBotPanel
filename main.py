@@ -267,6 +267,12 @@ def handle_messages(message):
         }
         logger.info(f"➕ جلسه زمانبندی جدید برای {chat_id}, پیام اصلی {original_msg_id} آغاز شد. مرحله: awaiting_initial_choice")
 
+        # Start the timeout thread for this pending media item *immediately*.
+        # It will only act if interactive_session_active becomes false or the item is not removed by other flows.
+        if original_content_type != 'text': # Timeout primarily for media, text is handled differently or scheduled
+            threading.Thread(target=send_media_after_timeout, args=(pending_media_key,)).start()
+            logger.debug(f"🧵 ترد send_media_after_timeout برای msg_id: {pending_media_key} شروع شد.")
+
         markup = InlineKeyboardMarkup(row_width=1)
         btn_schedule_shamsi = InlineKeyboardButton("📅 زمان‌بندی شمسی", callback_data=f"sch_shamsi_start_{original_msg_id}")
         btn_send_delayed = InlineKeyboardButton("⏰ ارسال با تأخیر/کپشن", callback_data=f"sch_send_delayed_{original_msg_id}")
