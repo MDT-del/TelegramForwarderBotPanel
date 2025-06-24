@@ -13,6 +13,7 @@ import uuid # For unique job IDs
 import jdatetime
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import atexit
+import threading # <--- Import المفقود اضافه شد
 
 # تنظیمات اولیه
 app = Flask(__name__)
