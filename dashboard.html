@@ -99,52 +99,12 @@
         </div>
     </div>
 
-    <!-- کارت مدیریت -->
-    <div class="card mb-4">
-        <div class="card-header bg-secondary text-white">
-            <i class="fas fa-cog"></i> تنظیمات
-        </div>
-        <div class="card-body">
-            <form action="/update-signature" method="post" class="mb-4">
-                <div class="mb-3">
-                    <label class="form-label">متن امضا:</label>
-                    <input type="text" name="signature" class="form-control" 
-                           value="{{ status.signature.replace('\n\n', '') }}" required>
-                </div>
-                <button type="submit" class="btn btn-primary">ذخیره تغییرات</button>
-            </form>
-
-            <form action="/toggle-bot" method="post">
-                <button type="submit" class="btn btn-{% if status.active %}danger{% else %}success{% endif %}">
-                    {% if status.active %}
-                        <i class="fas fa-power-off"></i> غیرفعال کردن ربات
-                    {% else %}
-                        <i class="fas fa-play"></i> فعال کردن ربات
-                    {% endif %}
-                </button>
-            </form>
-        </div>
-    </div>
-
-    <!-- کارت لاگ‌ها -->
-    <div class="card mb-4">
-        <div class="card-header bg-dark text-white">
-            <i class="fas fa-terminal"></i> لاگ اخیر
-        </div>
-        <div class="card-body">
-            <div class="log-container">
-                {{ status.logs|safe }}
-            </div>
-        </div>
-    </div>
-
     <!-- کارت پست‌های زمان‌بندی شده -->
-    <div class="card">
+    <div class="card mb-4">
         <div class="card-header bg-success text-white">
             <i class="fas fa-clock"></i> پست‌های زمان‌بندی شده (فعال: {{ status.scheduled_count }})
         </div>
         <div class="card-body">
-            <p>DEBUG: scheduled_jobs_list: {{ status.scheduled_jobs_list }}</p> <!-- خط دیباگ اضافه شده -->
             {% if status.scheduled_jobs_list %}
                 <div class="table-responsive">
                     <table class="table table-striped table-hover">
@@ -180,6 +140,45 @@
             {% else %}
                 <p class="text-center text-muted">در حال حاضر هیچ پست زمان‌بندی شده‌ای وجود ندارد.</p>
             {% endif %}
+        </div>
+    </div>
+
+    <!-- کارت مدیریت -->
+    <div class="card mb-4">
+        <div class="card-header bg-secondary text-white">
+            <i class="fas fa-cog"></i> تنظیمات
+        </div>
+        <div class="card-body">
+            <form action="/update-signature" method="post" class="mb-4">
+                <div class="mb-3">
+                    <label class="form-label">متن امضا:</label>
+                    <input type="text" name="signature" class="form-control"
+                           value="{{ status.signature.replace('\n\n', '') }}" required>
+                </div>
+                <button type="submit" class="btn btn-primary">ذخیره تغییرات</button>
+            </form>
+
+            <form action="/toggle-bot" method="post">
+                <button type="submit" class="btn btn-{% if status.active %}danger{% else %}success{% endif %}">
+                    {% if status.active %}
+                        <i class="fas fa-power-off"></i> غیرفعال کردن ربات
+                    {% else %}
+                        <i class="fas fa-play"></i> فعال کردن ربات
+                    {% endif %}
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- کارت لاگ‌ها -->
+    <div class="card">
+        <div class="card-header bg-dark text-white">
+            <i class="fas fa-terminal"></i> لاگ اخیر
+        </div>
+        <div class="card-body">
+            <div class="log-container">
+                {{ status.logs|safe }}
+            </div>
         </div>
     </div>
 
@@ -240,9 +239,9 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
 <script>
-    // به‌روزرسانی خودکار هر 10 ثانیه (به جز زمانی که مدال باز است)
+    // به‌روزرسانی خودکار هر 300 ثانیه (5 دقیقه) (به جز زمانی که مدال باز است)
     if (!document.querySelector('.modal.show')) {
-        setTimeout(() => location.reload(), 10000);
+        setTimeout(() => location.reload(), 300000);
     }
 
     // پر کردن اطلاعات مدال ویرایش
