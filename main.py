@@ -670,9 +670,52 @@ def dashboard():
         'message_stats': data['stats'], # This now includes 'scheduled'
         'pending_count': len(data['pending_media']), # Media waiting for timeout/caption OR in interactive setup
         'scheduled_count': data['stats']['scheduled'], # Number of active APScheduler jobs
-        'active_sessions': len(user_schedule_sessions) # Number of users in interactive scheduling
+        'active_sessions': len(user_schedule_sessions), # Number of users in interactive scheduling
+        'scheduled_jobs_list': format_scheduled_jobs_for_dashboard() # Add formatted list
     })
     return render_template("dashboard.html", status=bot_status)
+
+def format_scheduled_jobs_for_dashboard():
+    formatted_jobs = []
+    if not scheduler or not scheduler.running:
+        return formatted_jobs
+
+    for job_id, job_info in data['scheduled_jobs'].items():
+        try:
+            aps_job = scheduler.get_job(job_id)
+            if aps_job:
+                run_time_aware = aps_job.next_run_time # This is already timezone-aware
+                # Convert to Shamsi for display
+                shamsi_time = jdatetime.datetime.fromgregorian(datetime=run_time_aware)
+                formatted_time = shamsi_time.strftime("%Y/%m/%d %H:%M:%S")
+
+                # Attempt to get caption or text content for display
+                content_preview = job_info.get('caption', job_info.get('text_content', ''))
+                if content_preview and len(content_preview) > 50:
+                    content_preview = content_preview[:47] + "..."
+
+                formatted_jobs.append({
+                    'id': job_id,
+                    'type': job_info['type'],
+                    'time': formatted_time, # Shamsi time
+                    'next_run_time_iso': run_time_aware.isoformat(), # Store original ISO for editing
+                    'content_preview': content_preview if content_preview else f"({job_info['type']})"
+                })
+            else:
+                 logger.warning(f"Job {job_id} found in data['scheduled_jobs'] but not in APScheduler.")
+        except Exception as e:
+            logger.error(f"Error formatting job {job_id} for dashboard: {e}")
+            # Add a placeholder or skip if critical info is missing
+            formatted_jobs.append({
+                'id': job_id,
+                'type': job_info.get('type', 'N/A'),
+                'time': 'Error loading time',
+                'content_preview': 'Error loading content'
+            })
+
+    # Sort jobs by time (ascending)
+    formatted_jobs.sort(key=lambda x: x.get('next_run_time_iso', ''))
+    return formatted_jobs
 
 @app.route("/update-signature", methods=["POST"])
 @login_required
@@ -687,6 +730,78 @@ def toggle_bot_route():
     bot_status["active"] = not bot_status["active"]
     status_text = "فعال" if bot_status["active"] else "غیرفعال"
     logger.info(f"🔌 وضعیت ربات تغییر کرد به: {status_text}")
+    return redirect("/dashboard")
+
+@app.route("/edit-schedule", methods=["POST"])
+@login_required
+def edit_schedule_route():
+    job_id = request.form.get('job_id')
+    new_datetime_str = request.form.get('new_datetime') # "YYYY/MM/DD HH:MM"
+
+    if not job_id or not new_datetime_str:
+        logger.error("ID جاب یا تاریخ جدید برای ویرایش ارائه نشده است.")
+        # session['flash_message'] = ("خطا: اطلاعات کافی برای ویرایش ارسال نشده.", "danger")
+        return redirect("/dashboard") # یا نمایش پیام خطا
+
+    try:
+        # Parse Shamsi datetime string
+        parts = new_datetime_str.replace('/', ' ').replace(':', ' ').split()
+        s_year, s_month, s_day, s_hour, s_minute = map(int, parts)
+
+        shamsi_dt = jdatetime.datetime(s_year, s_month, s_day, s_hour, s_minute)
+        gregorian_dt_naive = shamsi_dt.togregorian()
+
+        if scheduler.timezone:
+            gregorian_dt_aware = gregorian_dt_naive.replace(tzinfo=scheduler.timezone)
+            current_aware_time = datetime.now(scheduler.timezone)
+        else:
+            gregorian_dt_aware = gregorian_dt_naive
+            current_aware_time = datetime.now()
+            logger.warning("⚠️ scheduler.timezone تنظیم نشده است، از زمان naive استفاده می‌شود.")
+
+        if gregorian_dt_aware < current_aware_time:
+            logger.warning(f"کاربر تلاش کرد زمان {job_id} را به گذشته تغییر دهد: {shamsi_dt.strftime('%Y/%m/%d %H:%M')}")
+            # session['flash_message'] = ("خطا: زمان جدید نمی‌تواند در گذشته باشد.", "danger")
+            return redirect("/dashboard")
+
+        scheduler.modify_job(job_id, trigger='date', run_date=gregorian_dt_aware)
+        logger.info(f"✅ زمان اجرای جاب {job_id} به {gregorian_dt_aware.strftime('%Y-%m-%d %H:%M:%S %Z')} (شمسی: {shamsi_dt.strftime('%Y/%m/%d %H:%M')}) تغییر یافت.")
+        # session['flash_message'] = (f"زمان جاب {job_id} با موفقیت به‌روز شد.", "success")
+
+    except (ValueError, TypeError) as e:
+        logger.error(f"❌ خطای قالب‌بندی تاریخ/زمان جدید '{new_datetime_str}' برای جاب {job_id}: {e}")
+        # session['flash_message'] = (f"خطا در قالب تاریخ/زمان جدید: {e}", "danger")
+    except Exception as e:
+        logger.error(f"❌ خطا در ویرایش زمان جاب {job_id}: {e}", exc_info=True)
+        # session['flash_message'] = (f"خطای ناشناخته در ویرایش جاب: {e}", "danger")
+
+    return redirect("/dashboard")
+
+@app.route("/delete-schedule", methods=["POST"])
+@login_required
+def delete_schedule_route():
+    job_id = request.form.get('job_id')
+
+    if not job_id:
+        logger.error("ID جاب برای حذف ارائه نشده است.")
+        # session['flash_message'] = ("خطا: ID جاب برای حذف مشخص نشده.", "danger")
+        return redirect("/dashboard")
+
+    try:
+        scheduler.remove_job(job_id)
+        if job_id in data['scheduled_jobs']:
+            del data['scheduled_jobs'][job_id]
+            data['stats']['scheduled'] = max(0, data['stats']['scheduled'] - 1) # Decrement count
+        logger.info(f"✅ جاب {job_id} با موفقیت حذف شد.")
+        # session['flash_message'] = (f"جاب {job_id} با موفقیت حذف شد.", "success")
+    except Exception as e: # Could be JobLookupError if job doesn't exist
+        logger.error(f"❌ خطا در حذف جاب {job_id}: {e}", exc_info=True)
+        # session['flash_message'] = (f"خطا در حذف جاب {job_id}: {e}", "danger")
+        # Ensure consistency even if APScheduler fails to find it but it's in our tracking
+        if job_id in data['scheduled_jobs']:
+            del data['scheduled_jobs'][job_id]
+            data['stats']['scheduled'] = max(0, data['stats']['scheduled'] - 1)
+
     return redirect("/dashboard")
 
 def run_bot_polling():

@@ -127,7 +127,7 @@
     </div>
 
     <!-- کارت لاگ‌ها -->
-    <div class="card">
+    <div class="card mb-4">
         <div class="card-header bg-dark text-white">
             <i class="fas fa-terminal"></i> لاگ اخیر
         </div>
@@ -137,13 +137,174 @@
             </div>
         </div>
     </div>
+
+    <!-- کارت پست‌های زمان‌بندی شده -->
+    <div class="card">
+        <div class="card-header bg-success text-white">
+            <i class="fas fa-clock"></i> پست‌های زمان‌بندی شده (فعال: {{ status.scheduled_count }})
+        </div>
+        <div class="card-body">
+            {% if status.scheduled_jobs_list %}
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover">
+                        <thead>
+                            <tr>
+                                <th scope="col">#</th>
+                                <th scope="col">نوع</th>
+                                <th scope="col">زمان ارسال (شمسی)</th>
+                                <th scope="col">محتوا (پیش‌نمایش)</th>
+                                <th scope="col">عملیات</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for job in status.scheduled_jobs_list %}
+                            <tr>
+                                <th scope="row">{{ loop.index }}</th>
+                                <td><span class="badge bg-secondary">{{ job.type }}</span></td>
+                                <td>{{ job.time }}</td>
+                                <td>{{ job.content_preview }}</td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-primary me-1" data-bs-toggle="modal" data-bs-target="#editJobModal" data-job-id="{{ job.id }}" data-job-time="{{ job.next_run_time_iso }}" data-job-type="{{ job.type }}" data-job-content="{{ job.content_preview }}">
+                                        <i class="fas fa-edit"></i> ویرایش
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteJobModal" data-job-id="{{ job.id }}" data-job-info="{{ job.type }} در {{ job.time }}">
+                                        <i class="fas fa-trash"></i> حذف
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="text-center text-muted">در حال حاضر هیچ پست زمان‌بندی شده‌ای وجود ندارد.</p>
+            {% endif %}
+        </div>
+    </div>
+
 </div>
+
+<!-- Modal ویرایش پست -->
+<div class="modal fade" id="editJobModal" tabindex="-1" aria-labelledby="editJobModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="editJobModalLabel">ویرایش زمان ارسال پست</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form id="editJobForm" action="/edit-schedule" method="post">
+        <div class="modal-body">
+          <input type="hidden" name="job_id" id="edit_job_id">
+          <p>پست: <strong id="edit_job_info_text"></strong></p>
+          <div class="mb-3">
+            <label for="new_datetime" class="form-label">زمان جدید ارسال (شمسی):</label>
+            <p class="small text-muted">فرمت مورد انتظار: YYYY/MM/DD HH:MM (مثال: 1403/05/21 15:30)</p>
+            <input type="text" class="form-control" id="new_datetime" name="new_datetime" required pattern="\d{4}/\d{1,2}/\d{1,2} \d{1,2}:\d{1,2}" placeholder="مثال: ۱۴۰۳/۰۱/۱۵ ۱۸:۴۵">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">انصراف</button>
+          <button type="submit" class="btn btn-primary">ذخیره تغییرات</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Modal حذف پست -->
+<div class="modal fade" id="deleteJobModal" tabindex="-1" aria-labelledby="deleteJobModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="deleteJobModalLabel">تایید حذف پست زمان‌بندی شده</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form id="deleteJobForm" action="/delete-schedule" method="post">
+        <div class="modal-body">
+          <input type="hidden" name="job_id" id="delete_job_id">
+          <p>آیا از حذف پست زمان‌بندی شده زیر اطمینان دارید؟</p>
+          <p><strong id="delete_job_info_text"></strong></p>
+          <p class="text-danger small">این عملیات غیرقابل بازگشت است.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">انصراف</button>
+          <button type="submit" class="btn btn-danger">حذف</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
 <script>
-    // به‌روزرسانی خودکار هر 10 ثانیه
-    setTimeout(() => location.reload(), 10000);
+    // به‌روزرسانی خودکار هر 10 ثانیه (به جز زمانی که مدال باز است)
+    if (!document.querySelector('.modal.show')) {
+        setTimeout(() => location.reload(), 10000);
+    }
+
+    // پر کردن اطلاعات مدال ویرایش
+    var editJobModal = document.getElementById('editJobModal');
+    if(editJobModal) {
+        editJobModal.addEventListener('show.bs.modal', function (event) {
+            var button = event.relatedTarget;
+            var jobId = button.getAttribute('data-job-id');
+            var jobTimeIso = button.getAttribute('data-job-time'); // ISO format from server
+            var jobType = button.getAttribute('data-job-type');
+            var jobContent = button.getAttribute('data-job-content');
+
+            var modalTitle = editJobModal.querySelector('.modal-title');
+            var modalJobIdInput = editJobModal.querySelector('#edit_job_id');
+            var modalJobInfoText = editJobModal.querySelector('#edit_job_info_text');
+            var modalNewDatetimeInput = editJobModal.querySelector('#new_datetime');
+
+            modalTitle.textContent = 'ویرایش زمان ارسال پست: ' + jobType;
+            modalJobIdInput.value = jobId;
+            modalJobInfoText.textContent = jobContent || `(${jobType})`;
+
+            // Convert ISO to "YYYY/MM/DD HH:MM" Shamsi for display
+            if (jobTimeIso) {
+                // Note: JavaScript's Date object can parse ISO 8601 directly.
+                // For accurate Shamsi conversion, this would ideally be done server-side
+                // or with a robust Jalali date library in JS if available and needed for display.
+                // Here, we'll make a simplified assumption for placeholder or rely on server's interpretation of Shamsi string.
+                // A proper solution would be to parse ISO, convert to Jalali, then format.
+                // For now, let's try to format the ISO date to a more user-friendly Gregorian placeholder
+                // or expect the user to input Shamsi directly as per the placeholder.
+                try {
+                    const dateObj = new Date(jobTimeIso);
+                    // This is still Gregorian, but in a similar format.
+                    // const placeholderDate = `${dateObj.getFullYear()}/${String(dateObj.getMonth() + 1).padStart(2, '0')}/${String(dateObj.getDate()).padStart(2, '0')} ${String(dateObj.getHours()).padStart(2, '0')}:${String(dateObj.getMinutes()).padStart(2, '0')}`;
+                    // Given the input is Shamsi, we might not prefill or prefill with a clear instruction.
+                    // Let's keep it empty and rely on placeholder and pattern.
+                    modalNewDatetimeInput.value = ''; // Clear previous value
+                } catch (e) {
+                    console.error("Error parsing jobTimeIso: ", e);
+                    modalNewDatetimeInput.value = ''; // Fallback
+                }
+            } else {
+                modalNewDatetimeInput.value = ''; // Clear if no time provided
+            }
+        });
+    }
+
+    // پر کردن اطلاعات مدال حذف
+    var deleteJobModal = document.getElementById('deleteJobModal');
+    if(deleteJobModal) {
+        deleteJobModal.addEventListener('show.bs.modal', function (event) {
+            var button = event.relatedTarget;
+            var jobId = button.getAttribute('data-job-id');
+            var jobInfo = button.getAttribute('data-job-info');
+
+            var modalJobIdInput = deleteJobModal.querySelector('#delete_job_id');
+            var modalJobInfoText = deleteJobModal.querySelector('#delete_job_info_text');
+
+            modalJobIdInput.value = jobId;
+            modalJobInfoText.textContent = jobInfo;
+        });
+    }
+
 </script>
 </body>
 </html>
