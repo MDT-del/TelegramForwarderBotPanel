@@ -5,3 +5,4 @@ apscheduler==3.10.4
 jdatetime==4.1.1
 Werkzeug==3.0.1
 gunicorn==21.2.0
+pytz==2024.1
