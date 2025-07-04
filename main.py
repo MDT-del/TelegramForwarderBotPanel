@@ -557,7 +557,8 @@ def process_shamsi_minute_step(message, session_data):
 
         # Correct way to make naive datetime aware with zoneinfo
         if scheduler.timezone:
-            gregorian_dt_aware = gregorian_dt_naive.replace(tzinfo=scheduler.timezone)
+            # استفاده از localize به جای replace برای جلوگیری از مشکل LMT
+            gregorian_dt_aware = scheduler.timezone.localize(gregorian_dt_naive)
             current_aware_time = datetime.now(scheduler.timezone)
         else:
             # Fallback if scheduler.timezone is None (should not happen if initialized correctly)
@@ -820,7 +821,8 @@ def edit_schedule_route():
 
         # Handle timezone
         if scheduler.timezone:
-            gregorian_dt_aware = gregorian_dt_naive.replace(tzinfo=scheduler.timezone)
+            # استفاده از localize به جای replace برای جلوگیری از مشکل LMT
+            gregorian_dt_aware = scheduler.timezone.localize(gregorian_dt_naive)
             current_aware_time = datetime.now(scheduler.timezone)
         else:
             gregorian_dt_aware = gregorian_dt_naive
