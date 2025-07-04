@@ -197,9 +197,18 @@
           <input type="hidden" name="job_id" id="edit_job_id">
           <p>پست: <strong id="edit_job_info_text"></strong></p>
           <div class="mb-3">
-            <label for="new_datetime" class="form-label">زمان جدید ارسال (شمسی):</label>
-            <p class="small text-muted">فرمت مورد انتظار: YYYY/MM/DD HH:MM (مثال: 1403/05/21 15:30)</p>
-            <input type="text" class="form-control" id="new_datetime" name="new_datetime" required pattern="\d{4}/\d{1,2}/\d{1,2} \d{1,2}:\d{1,2}" placeholder="مثال: ۱۴۰۳/۰۱/۱۵ ۱۸:۴۵">
+            <label for="new_date" class="form-label">تاریخ جدید ارسال (شمسی):</label>
+            <input type="text" class="form-control" id="new_date" name="new_date" required pattern="\d{4}/\d{1,2}/\d{1,2}" placeholder="مثال: ۱۴۰۳/۰۵/۲۱">
+          </div>
+          <div class="row">
+            <div class="col-md-6 mb-3">
+              <label for="new_hour" class="form-label">ساعت (۰-۲۳):</label>
+              <input type="number" class="form-control" id="new_hour" name="new_hour" required min="0" max="23" placeholder="مثال: ۱۸">
+            </div>
+            <div class="col-md-6 mb-3">
+              <label for="new_minute" class="form-label">دقیقه (۰-۵۹):</label>
+              <input type="number" class="form-control" id="new_minute" name="new_minute" required min="0" max="59" placeholder="مثال: ۴۵">
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -263,29 +272,19 @@
             modalJobIdInput.value = jobId;
             modalJobInfoText.textContent = jobContent || `(${jobType})`;
 
-            // Convert ISO to "YYYY/MM/DD HH:MM" Shamsi for display
-            if (jobTimeIso) {
-                // Note: JavaScript's Date object can parse ISO 8601 directly.
-                // For accurate Shamsi conversion, this would ideally be done server-side
-                // or with a robust Jalali date library in JS if available and needed for display.
-                // Here, we'll make a simplified assumption for placeholder or rely on server's interpretation of Shamsi string.
-                // A proper solution would be to parse ISO, convert to Jalali, then format.
-                // For now, let's try to format the ISO date to a more user-friendly Gregorian placeholder
-                // or expect the user to input Shamsi directly as per the placeholder.
-                try {
-                    const dateObj = new Date(jobTimeIso);
-                    // This is still Gregorian, but in a similar format.
-                    // const placeholderDate = `${dateObj.getFullYear()}/${String(dateObj.getMonth() + 1).padStart(2, '0')}/${String(dateObj.getDate()).padStart(2, '0')} ${String(dateObj.getHours()).padStart(2, '0')}:${String(dateObj.getMinutes()).padStart(2, '0')}`;
-                    // Given the input is Shamsi, we might not prefill or prefill with a clear instruction.
-                    // Let's keep it empty and rely on placeholder and pattern.
-                    modalNewDatetimeInput.value = ''; // Clear previous value
-                } catch (e) {
-                    console.error("Error parsing jobTimeIso: ", e);
-                    modalNewDatetimeInput.value = ''; // Fallback
-                }
-            } else {
-                modalNewDatetimeInput.value = ''; // Clear if no time provided
-            }
+            var modalNewDateInput = editJobModal.querySelector('#new_date');
+            var modalNewHourInput = editJobModal.querySelector('#new_hour');
+            var modalNewMinuteInput = editJobModal.querySelector('#new_minute');
+
+            // Clear previous values
+            modalNewDateInput.value = '';
+            modalNewHourInput.value = '';
+            modalNewMinuteInput.value = '';
+
+            // We are not pre-filling the new date/time fields as the user is expected to enter new values.
+            // The current scheduled time is already visible in the table.
+            // If pre-filling was desired, we would need a robust Shamsi date parsing/formatting in JS
+            // or pass the Shamsi components from the server.
         });
     }
 

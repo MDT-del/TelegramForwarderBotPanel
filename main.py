@@ -736,18 +736,32 @@ def toggle_bot_route():
 @login_required
 def edit_schedule_route():
     job_id = request.form.get('job_id')
-    new_datetime_str = request.form.get('new_datetime') # "YYYY/MM/DD HH:MM"
+    new_date_str = request.form.get('new_date')
+    new_hour_str = request.form.get('new_hour')
+    new_minute_str = request.form.get('new_minute')
 
-    if not job_id or not new_datetime_str:
-        logger.error("ID جاب یا تاریخ جدید برای ویرایش ارائه نشده است.")
-        # session['flash_message'] = ("خطا: اطلاعات کافی برای ویرایش ارسال نشده.", "danger")
-        return redirect("/dashboard") # یا نمایش پیام خطا
+    if not job_id or not new_date_str or new_hour_str is None or new_minute_str is None :
+        logger.error("ID جاب یا یکی از مقادیر تاریخ/ساعت/دقیقه برای ویرایش ارائه نشده است.")
+        # session['flash_message'] = ("خطا: اطلاعات تاریخ و زمان کامل نیست.", "danger")
+        return redirect("/dashboard")
 
     try:
-        # Parse Shamsi datetime string
-        parts = new_datetime_str.replace('/', ' ').replace(':', ' ').split()
-        s_year, s_month, s_day, s_hour, s_minute = map(int, parts)
+        # Validate and parse date
+        date_parts = new_date_str.split('/')
+        if len(date_parts) != 3:
+            raise ValueError("فرمت تاریخ نامعتبر است. باید YYYY/MM/DD باشد.")
+        s_year, s_month, s_day = map(int, date_parts)
 
+        # Validate and parse hour and minute
+        s_hour = int(new_hour_str)
+        s_minute = int(new_minute_str)
+
+        if not (0 <= s_hour <= 23):
+            raise ValueError("ساعت باید بین ۰ تا ۲۳ باشد.")
+        if not (0 <= s_minute <= 59):
+            raise ValueError("دقیقه باید بین ۰ تا ۵۹ باشد.")
+
+        # Combine to full Shamsi datetime
         shamsi_dt = jdatetime.datetime(s_year, s_month, s_day, s_hour, s_minute)
         gregorian_dt_naive = shamsi_dt.togregorian()
 
@@ -770,10 +784,10 @@ def edit_schedule_route():
         # session['flash_message'] = (f"زمان جاب {job_id} با موفقیت به‌روز شد.", "success")
 
     except (ValueError, TypeError) as e:
-        logger.error(f"❌ خطای قالب‌بندی تاریخ/زمان جدید '{new_datetime_str}' برای جاب {job_id}: {e}", exc_info=True) # Added exc_info for more details
+        logger.error(f"❌ خطای قالب‌بندی یا اعتبارسنجی تاریخ/زمان جدید (تاریخ: '{new_date_str}', ساعت: '{new_hour_str}', دقیقه: '{new_minute_str}') برای جاب {job_id}: {e}", exc_info=True)
         # session['flash_message'] = (f"خطا در قالب تاریخ/زمان جدید: {e}", "danger")
     except Exception as e:
-        logger.error(f"❌ خطا در ویرایش زمان جاب {job_id}: {e}", exc_info=True)
+        logger.error(f"❌ خطا در ویرایش زمان جاب {job_id} با ورودی‌ها (تاریخ: '{new_date_str}', ساعت: '{new_hour_str}', دقیقه: '{new_minute_str}'): {e}", exc_info=True)
         # session['flash_message'] = (f"خطای ناشناخته در ویرایش جاب: {e}", "danger")
 
     return redirect("/dashboard")
