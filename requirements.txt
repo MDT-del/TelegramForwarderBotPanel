@@ -1,5 +1,7 @@
 Flask==3.0.0
 pyTelegramBotAPI==4.16.1
 python-dotenv==1.0.0
-apscheduler
-jdatetime
+apscheduler==3.10.4
+jdatetime==4.1.1
+Werkzeug==3.0.1
+gunicorn==21.2.0
