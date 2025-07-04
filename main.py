@@ -764,12 +764,13 @@ def edit_schedule_route():
             # session['flash_message'] = ("خطا: زمان جدید نمی‌تواند در گذشته باشد.", "danger")
             return redirect("/dashboard")
 
-        scheduler.modify_job(job_id, trigger='date', run_date=gregorian_dt_aware)
+        # Correct way to modify the job's run_date for a 'date' trigger
+        scheduler.modify_job(job_id, next_run_time=gregorian_dt_aware)
         logger.info(f"✅ زمان اجرای جاب {job_id} به {gregorian_dt_aware.strftime('%Y-%m-%d %H:%M:%S %Z')} (شمسی: {shamsi_dt.strftime('%Y/%m/%d %H:%M')}) تغییر یافت.")
         # session['flash_message'] = (f"زمان جاب {job_id} با موفقیت به‌روز شد.", "success")
 
     except (ValueError, TypeError) as e:
-        logger.error(f"❌ خطای قالب‌بندی تاریخ/زمان جدید '{new_datetime_str}' برای جاب {job_id}: {e}")
+        logger.error(f"❌ خطای قالب‌بندی تاریخ/زمان جدید '{new_datetime_str}' برای جاب {job_id}: {e}", exc_info=True) # Added exc_info for more details
         # session['flash_message'] = (f"خطا در قالب تاریخ/زمان جدید: {e}", "danger")
     except Exception as e:
         logger.error(f"❌ خطا در ویرایش زمان جاب {job_id}: {e}", exc_info=True)
