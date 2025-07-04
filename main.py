@@ -9,16 +9,20 @@ import time
 from config import TOKEN, SOURCE_USER_ID, DESTINATION_CHAT_ID, SOURCE_TEXT, SECRET_KEY, ADMIN_USERNAME, ADMIN_PASSWORD
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime
-import uuid 
+import uuid # For unique job IDs
 import jdatetime
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import atexit
-import threading 
+import threading # <--- Import المفقود اضافه شد
+import pytz
 
 # تنظیمات اولیه
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
-scheduler = BackgroundScheduler(timezone="Asia/Tehran")
+
+# تنظیم timezone
+tehran_tz = pytz.timezone('Asia/Tehran')
+scheduler = BackgroundScheduler(timezone=tehran_tz)
 if not scheduler.running:
     scheduler.start()
 
@@ -77,40 +81,63 @@ def _send_media_action(media_info, job_id=None):
     file_id = media_info.get('file_id') # Make sure to handle if file_id is None for text
     text_content = media_info.get('text_content')
 
+    logger.info(f"🚀 شروع ارسال {media_type} (Job ID: {job_id if job_id else 'N/A'})")
+    logger.info(f"📋 اطلاعات: file_id={file_id}, caption_length={len(caption) if caption else 0}")
 
     try:
         if media_type == 'photo':
-            bot.send_photo(DESTINATION_CHAT_ID, file_id, caption=caption, parse_mode='html')
+            logger.info(f"📸 ارسال عکس به {DESTINATION_CHAT_ID}")
+            result = bot.send_photo(DESTINATION_CHAT_ID, file_id, caption=caption, parse_mode='html')
+            logger.info(f"📸 عکس ارسال شد: {result.message_id}")
         elif media_type == 'voice':
-            bot.send_voice(DESTINATION_CHAT_ID, file_id, caption=caption, parse_mode='html')
+            logger.info(f"🎤 ارسال وویس به {DESTINATION_CHAT_ID}")
+            result = bot.send_voice(DESTINATION_CHAT_ID, file_id, caption=caption, parse_mode='html')
+            logger.info(f"🎤 وویس ارسال شد: {result.message_id}")
         elif media_type == 'video':
-            bot.send_video(DESTINATION_CHAT_ID, file_id, caption=caption, parse_mode='html')
+            logger.info(f"🎥 ارسال ویدیو به {DESTINATION_CHAT_ID}")
+            result = bot.send_video(DESTINATION_CHAT_ID, file_id, caption=caption, parse_mode='html')
+            logger.info(f"🎥 ویدیو ارسال شد: {result.message_id}")
         elif media_type == 'audio':
-            bot.send_audio(DESTINATION_CHAT_ID, file_id, caption=caption, parse_mode='html')
+            logger.info(f"🎵 ارسال فایل صوتی به {DESTINATION_CHAT_ID}")
+            result = bot.send_audio(DESTINATION_CHAT_ID, file_id, caption=caption, parse_mode='html')
+            logger.info(f"🎵 فایل صوتی ارسال شد: {result.message_id}")
         elif media_type == 'text':
-            # For text, 'caption' here IS the text_content with signature
-            bot.send_message(DESTINATION_CHAT_ID, caption) # caption already includes signature for text
+            logger.info(f"📝 ارسال متن به {DESTINATION_CHAT_ID}")
+            result = bot.send_message(DESTINATION_CHAT_ID, caption)
+            logger.info(f"📝 متن ارسال شد: {result.message_id}")
 
         data['stats'][media_type] = data['stats'].get(media_type, 0) + 1
         data['stats']['total'] += 1
-        logger.info(f"✅ {media_type.capitalize()} ارسال شد (Job ID: {job_id if job_id else 'N/A'})")
+        logger.info(f"✅ {media_type.capitalize()} با موفقیت ارسال شد (Job ID: {job_id if job_id else 'N/A'})")
         if job_id and job_id in data['scheduled_jobs']:
             del data['scheduled_jobs'][job_id]
             data['stats']['scheduled'] = max(0, data['stats']['scheduled'] - 1)
+            logger.info(f"🗑️ جاب {job_id} از لیست حذف شد")
 
     except Exception as e:
         logger.error(f"❌ خطا در ارسال {media_type} (Job ID: {job_id if job_id else 'N/A'}): {e}", exc_info=True)
         if job_id and job_id in data['scheduled_jobs']:
             del data['scheduled_jobs'][job_id]
             data['stats']['scheduled'] = max(0, data['stats']['scheduled'] - 1)
+            logger.info(f"🗑️ جاب {job_id} به دلیل خطا از لیست حذف شد")
 
 def schedule_media_job(media_info, scheduled_time_dt_aware):
     job_id = str(uuid.uuid4())
     try:
-        scheduler.add_job(_send_media_action, 'date', run_date=scheduled_time_dt_aware, args=[media_info, job_id], id=job_id)
-        data['scheduled_jobs'][job_id] = media_info # Store basic info for tracking
+        logger.info(f"🗓️ تلاش برای زمانبندی {media_info['type']} در {scheduled_time_dt_aware.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"🗓️ Job ID: {job_id}")
+        
+        # اضافه کردن جاب به scheduler
+        job = scheduler.add_job(_send_media_action, 'date', run_date=scheduled_time_dt_aware, args=[media_info, job_id], id=job_id)
+        
+        # ذخیره اطلاعات جاب
+        data['scheduled_jobs'][job_id] = media_info
         data['stats']['scheduled'] += 1
-        logger.info(f"🗓️ {media_info['type']} برای ارسال در {scheduled_time_dt_aware.strftime('%Y-%m-%d %H:%M:%S %Z')} زمانبندی شد. Job ID: {job_id}")
+        
+        logger.info(f"✅ {media_info['type']} با موفقیت زمانبندی شد")
+        logger.info(f"📅 زمان اجرا: {job.next_run_time}")
+        logger.info(f"🆔 Job ID: {job_id}")
+        
         return job_id
     except Exception as e:
         logger.error(f"❌ خطا در زمانبندی {media_info['type']} (Job ID: {job_id}): {e}", exc_info=True)
@@ -866,6 +893,16 @@ def run_flask_server():
     logger.info("🌐 سرور Flask در حال اجرا در http://0.0.0.0:8080")
     app.run(host='0.0.0.0', port=8080, debug=False) # debug=False for production
 
+def test_scheduler():
+    """تست عملکرد scheduler"""
+    logger.info("🧪 تست scheduler...")
+    logger.info(f"📊 تعداد جاب‌های فعال: {len(scheduler.get_jobs())}")
+    logger.info(f"⏰ زمان فعلی: {datetime.now(tehran_tz)}")
+    logger.info(f"🌍 Timezone: {scheduler.timezone}")
+    
+    for job in scheduler.get_jobs():
+        logger.info(f"📋 جاب: {job.id} - زمان اجرا: {job.next_run_time}")
+
 def shutdown_app_scheduler():
     logger.info("🛑 متوقف کردن APScheduler...")
     if scheduler.running:
@@ -877,6 +914,9 @@ def shutdown_app_scheduler():
 
 if __name__ == "__main__":
     atexit.register(shutdown_app_scheduler)
+
+    # تست scheduler در شروع
+    test_scheduler()
 
     flask_thread = Thread(target=run_flask_server, daemon=True)
     bot_thread = Thread(target=run_bot_polling, daemon=True)
