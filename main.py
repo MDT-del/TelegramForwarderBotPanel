@@ -9,11 +9,11 @@ import time
 from config import TOKEN, SOURCE_USER_ID, DESTINATION_CHAT_ID, SOURCE_TEXT, SECRET_KEY, ADMIN_USERNAME, ADMIN_PASSWORD
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime
-import uuid # For unique job IDs
+import uuid 
 import jdatetime
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import atexit
-import threading # <--- Import المفقود اضافه شد
+import threading 
 
 # تنظیمات اولیه
 app = Flask(__name__)
@@ -736,13 +736,25 @@ def toggle_bot_route():
 @login_required
 def edit_schedule_route():
     job_id = request.form.get('job_id')
-    new_date_str = request.form.get('new_date')
-    new_hour_str = request.form.get('new_hour')
-    new_minute_str = request.form.get('new_minute')
+    new_date_str = request.form.get('new_date', '').strip()
+    new_hour_str = request.form.get('new_hour', '').strip()
+    new_minute_str = request.form.get('new_minute', '').strip()
 
-    if not job_id or not new_date_str or new_hour_str is None or new_minute_str is None :
-        logger.error("ID جاب یا یکی از مقادیر تاریخ/ساعت/دقیقه برای ویرایش ارائه نشده است.")
-        # session['flash_message'] = ("خطا: اطلاعات تاریخ و زمان کامل نیست.", "danger")
+    # Validate required fields
+    if not job_id:
+        logger.error("ID جاب برای ویرایش ارائه نشده است.")
+        session['flash_message'] = ("خطا: ID جاب ارائه نشده است.", "danger")
+        return redirect("/dashboard")
+    
+    if not new_date_str or not new_hour_str or not new_minute_str:
+        logger.error("تمام فیلدهای تاریخ، ساعت و دقیقه باید پر شوند.")
+        session['flash_message'] = ("خطا: تمام فیلدهای تاریخ، ساعت و دقیقه باید پر شوند.", "danger")
+        return redirect("/dashboard")
+
+    # Check if job exists
+    if job_id not in data['scheduled_jobs']:
+        logger.error(f"جاب {job_id} یافت نشد.")
+        session['flash_message'] = (f"خطا: جاب {job_id} یافت نشد.", "danger")
         return redirect("/dashboard")
 
     try:
@@ -750,7 +762,16 @@ def edit_schedule_route():
         date_parts = new_date_str.split('/')
         if len(date_parts) != 3:
             raise ValueError("فرمت تاریخ نامعتبر است. باید YYYY/MM/DD باشد.")
+        
         s_year, s_month, s_day = map(int, date_parts)
+        
+        # Validate Shamsi date ranges
+        if not (1300 <= s_year <= 1500):
+            raise ValueError("سال باید بین ۱۳۰۰ تا ۱۵۰۰ باشد.")
+        if not (1 <= s_month <= 12):
+            raise ValueError("ماه باید بین ۱ تا ۱۲ باشد.")
+        if not (1 <= s_day <= 31):
+            raise ValueError("روز باید بین ۱ تا ۳۱ باشد.")
 
         # Validate and parse hour and minute
         s_hour = int(new_hour_str)
@@ -761,10 +782,16 @@ def edit_schedule_route():
         if not (0 <= s_minute <= 59):
             raise ValueError("دقیقه باید بین ۰ تا ۵۹ باشد.")
 
-        # Combine to full Shamsi datetime
-        shamsi_dt = jdatetime.datetime(s_year, s_month, s_day, s_hour, s_minute)
+        # Create Shamsi datetime and validate it
+        try:
+            shamsi_dt = jdatetime.datetime(s_year, s_month, s_day, s_hour, s_minute)
+        except ValueError as e:
+            raise ValueError(f"تاریخ نامعتبر: {e}")
+
+        # Convert to Gregorian
         gregorian_dt_naive = shamsi_dt.togregorian()
 
+        # Handle timezone
         if scheduler.timezone:
             gregorian_dt_aware = gregorian_dt_naive.replace(tzinfo=scheduler.timezone)
             current_aware_time = datetime.now(scheduler.timezone)
@@ -773,22 +800,28 @@ def edit_schedule_route():
             current_aware_time = datetime.now()
             logger.warning("⚠️ scheduler.timezone تنظیم نشده است، از زمان naive استفاده می‌شود.")
 
-        if gregorian_dt_aware < current_aware_time:
-            logger.warning(f"کاربر تلاش کرد زمان {job_id} را به گذشته تغییر دهد: {shamsi_dt.strftime('%Y/%m/%d %H:%M')}")
-            # session['flash_message'] = ("خطا: زمان جدید نمی‌تواند در گذشته باشد.", "danger")
+        # Check if new time is in the past
+        if gregorian_dt_aware <= current_aware_time:
+            logger.warning(f"کاربر تلاش کرد زمان {job_id} را به گذشته یا حال تغییر دهد: {shamsi_dt.strftime('%Y/%m/%d %H:%M')}")
+            session['flash_message'] = ("خطا: زمان جدید نمی‌تواند در گذشته یا حال باشد.", "danger")
             return redirect("/dashboard")
 
-        # Correct way to modify the job's run_date for a 'date' trigger
-        scheduler.modify_job(job_id, next_run_time=gregorian_dt_aware)
-        logger.info(f"✅ زمان اجرای جاب {job_id} به {gregorian_dt_aware.strftime('%Y-%m-%d %H:%M:%S %Z')} (شمسی: {shamsi_dt.strftime('%Y/%m/%d %H:%M')}) تغییر یافت.")
-        # session['flash_message'] = (f"زمان جاب {job_id} با موفقیت به‌روز شد.", "success")
+        # Modify the job
+        try:
+            scheduler.modify_job(job_id, next_run_time=gregorian_dt_aware)
+            logger.info(f"✅ زمان اجرای جاب {job_id} به {gregorian_dt_aware.strftime('%Y-%m-%d %H:%M:%S %Z')} (شمسی: {shamsi_dt.strftime('%Y/%m/%d %H:%M')}) تغییر یافت.")
+            session['flash_message'] = (f"زمان جاب {job_id} با موفقیت به‌روز شد.", "success")
+        except Exception as e:
+            logger.error(f"❌ خطا در تغییر زمان جاب {job_id}: {e}")
+            session['flash_message'] = (f"خطا در تغییر زمان جاب: {e}", "danger")
+            return redirect("/dashboard")
 
-    except (ValueError, TypeError) as e:
-        logger.error(f"❌ خطای قالب‌بندی یا اعتبارسنجی تاریخ/زمان جدید (تاریخ: '{new_date_str}', ساعت: '{new_hour_str}', دقیقه: '{new_minute_str}') برای جاب {job_id}: {e}", exc_info=True)
-        # session['flash_message'] = (f"خطا در قالب تاریخ/زمان جدید: {e}", "danger")
+    except ValueError as e:
+        logger.error(f"❌ خطای اعتبارسنجی: {e}")
+        session['flash_message'] = (f"خطای اعتبارسنجی: {e}", "danger")
     except Exception as e:
-        logger.error(f"❌ خطا در ویرایش زمان جاب {job_id} با ورودی‌ها (تاریخ: '{new_date_str}', ساعت: '{new_hour_str}', دقیقه: '{new_minute_str}'): {e}", exc_info=True)
-        # session['flash_message'] = (f"خطای ناشناخته در ویرایش جاب: {e}", "danger")
+        logger.error(f"❌ خطای ناشناخته در ویرایش جاب {job_id}: {e}", exc_info=True)
+        session['flash_message'] = (f"خطای ناشناخته در ویرایش جاب: {e}", "danger")
 
     return redirect("/dashboard")
 
