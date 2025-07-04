@@ -14,6 +14,96 @@
             padding: 10px;
             border-radius: 5px;
         }
+        
+        /* تقویم شمسی */
+        .persian-datepicker {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .persian-datepicker-input {
+            cursor: pointer;
+        }
+        
+        .persian-datepicker-popup {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            z-index: 1000;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 10px;
+            min-width: 280px;
+            display: none;
+        }
+        
+        .persian-datepicker-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .persian-datepicker-nav {
+            background: none;
+            border: none;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 5px 10px;
+        }
+        
+        .persian-datepicker-title {
+            font-weight: bold;
+            text-align: center;
+        }
+        
+        .persian-datepicker-weekdays {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 2px;
+            margin-bottom: 5px;
+        }
+        
+        .persian-datepicker-weekday {
+            text-align: center;
+            font-weight: bold;
+            padding: 5px;
+            font-size: 12px;
+        }
+        
+        .persian-datepicker-days {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 2px;
+        }
+        
+        .persian-datepicker-day {
+            text-align: center;
+            padding: 8px 5px;
+            cursor: pointer;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+        
+        .persian-datepicker-day:hover {
+            background-color: #e9ecef;
+        }
+        
+        .persian-datepicker-day.selected {
+            background-color: #007bff;
+            color: white;
+        }
+        
+        .persian-datepicker-day.other-month {
+            color: #ccc;
+        }
+        
+        .persian-datepicker-day.today {
+            background-color: #28a745;
+            color: white;
+        }
     </style>
 </head>
 <body class="bg-light">
@@ -22,6 +112,15 @@
         <h1 class="h3 mb-0">🎛️ پنل مدیریت ربات</h1>
         <a href="/logout" class="btn btn-outline-danger">خروج</a>
     </div>
+
+    <!-- نمایش پیام‌های فلش -->
+    {% if session.get('flash_message') %}
+        {% set message, message_type = session.pop('flash_message') %}
+        <div class="alert alert-{{ message_type }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    {% endif %}
 
     <div class="row">
         <!-- کارت وضعیت -->
@@ -198,16 +297,44 @@
           <p>پست: <strong id="edit_job_info_text"></strong></p>
           <div class="mb-3">
             <label for="new_date" class="form-label">تاریخ جدید ارسال (شمسی):</label>
-            <input type="text" class="form-control" id="new_date" name="new_date" required pattern="\d{4}/\d{1,2}/\d{1,2}" placeholder="مثال: ۱۴۰۳/۰۵/۲۱">
+            <div class="persian-datepicker">
+              <input type="text" class="form-control persian-datepicker-input" id="new_date" name="new_date" required 
+                     pattern="\d{4}/\d{1,2}/\d{1,2}" 
+                     placeholder="مثال: ۱۴۰۳/۰۵/۲۱"
+                     title="فرمت تاریخ: YYYY/MM/DD (مثال: ۱۴۰۳/۰۵/۲۱)"
+                     readonly>
+              <div class="persian-datepicker-popup" id="datepicker-popup">
+                <div class="persian-datepicker-header">
+                  <button type="button" class="persian-datepicker-nav" id="prev-month">‹</button>
+                  <div class="persian-datepicker-title" id="current-month-year"></div>
+                  <button type="button" class="persian-datepicker-nav" id="next-month">›</button>
+                </div>
+                <div class="persian-datepicker-weekdays">
+                  <div class="persian-datepicker-weekday">ش</div>
+                  <div class="persian-datepicker-weekday">ی</div>
+                  <div class="persian-datepicker-weekday">د</div>
+                  <div class="persian-datepicker-weekday">س</div>
+                  <div class="persian-datepicker-weekday">چ</div>
+                  <div class="persian-datepicker-weekday">پ</div>
+                  <div class="persian-datepicker-weekday">ج</div>
+                </div>
+                <div class="persian-datepicker-days" id="calendar-days"></div>
+              </div>
+            </div>
+            <div class="form-text">برای انتخاب تاریخ روی فیلد کلیک کنید</div>
           </div>
           <div class="row">
             <div class="col-md-6 mb-3">
               <label for="new_hour" class="form-label">ساعت (۰-۲۳):</label>
-              <input type="number" class="form-control" id="new_hour" name="new_hour" required min="0" max="23" placeholder="مثال: ۱۸">
+              <input type="number" class="form-control" id="new_hour" name="new_hour" required 
+                     min="0" max="23" placeholder="مثال: ۱۸"
+                     title="ساعت باید بین ۰ تا ۲۳ باشد">
             </div>
             <div class="col-md-6 mb-3">
               <label for="new_minute" class="form-label">دقیقه (۰-۵۹):</label>
-              <input type="number" class="form-control" id="new_minute" name="new_minute" required min="0" max="59" placeholder="مثال: ۴۵">
+              <input type="number" class="form-control" id="new_minute" name="new_minute" required 
+                     min="0" max="59" placeholder="مثال: ۴۵"
+                     title="دقیقه باید بین ۰ تا ۵۹ باشد">
             </div>
           </div>
         </div>
@@ -266,8 +393,6 @@
             var modalTitle = editJobModal.querySelector('.modal-title');
             var modalJobIdInput = editJobModal.querySelector('#edit_job_id');
             var modalJobInfoText = editJobModal.querySelector('#edit_job_info_text');
-            var modalNewDatetimeInput = editJobModal.querySelector('#new_datetime');
-
             modalTitle.textContent = 'ویرایش زمان ارسال پست: ' + jobType;
             modalJobIdInput.value = jobId;
             modalJobInfoText.textContent = jobContent || `(${jobType})`;
@@ -281,10 +406,26 @@
             modalNewHourInput.value = '';
             modalNewMinuteInput.value = '';
 
-            // We are not pre-filling the new date/time fields as the user is expected to enter new values.
-            // The current scheduled time is already visible in the table.
-            // If pre-filling was desired, we would need a robust Shamsi date parsing/formatting in JS
-            // or pass the Shamsi components from the server.
+            // Try to parse and pre-fill current time if available
+            if (jobTimeIso) {
+                try {
+                    var currentDate = new Date(jobTimeIso);
+                    if (!isNaN(currentDate.getTime())) {
+                        // Convert to Shamsi date (approximate)
+                        var shamsiYear = currentDate.getFullYear() - 621;
+                        var shamsiMonth = currentDate.getMonth() + 1;
+                        var shamsiDay = currentDate.getDate();
+                        
+                        modalNewDateInput.value = shamsiYear + '/' + 
+                            (shamsiMonth < 10 ? '0' + shamsiMonth : shamsiMonth) + '/' + 
+                            (shamsiDay < 10 ? '0' + shamsiDay : shamsiDay);
+                        modalNewHourInput.value = currentDate.getHours();
+                        modalNewMinuteInput.value = currentDate.getMinutes();
+                    }
+                } catch (e) {
+                    console.log('Could not parse current time for pre-filling');
+                }
+            }
         });
     }
 
@@ -303,6 +444,210 @@
             modalJobInfoText.textContent = jobInfo;
         });
     }
+
+    // تقویم شمسی
+    class PersianDatePicker {
+        constructor(inputId, popupId) {
+            this.input = document.getElementById(inputId);
+            this.popup = document.getElementById(popupId);
+            this.currentDate = new Date();
+            this.selectedDate = null;
+            this.currentYear = this.currentDate.getFullYear() - 621; // تقریبی
+            this.currentMonth = this.currentDate.getMonth() + 1;
+            
+            this.init();
+        }
+        
+        init() {
+            // نمایش تقویم با کلیک روی input
+            this.input.addEventListener('click', () => {
+                this.togglePopup();
+            });
+            
+            // بستن تقویم با کلیک خارج از آن
+            document.addEventListener('click', (e) => {
+                if (!this.input.contains(e.target) && !this.popup.contains(e.target)) {
+                    this.hidePopup();
+                }
+            });
+            
+            // دکمه‌های ناوبری
+            document.getElementById('prev-month').addEventListener('click', () => {
+                this.previousMonth();
+            });
+            
+            document.getElementById('next-month').addEventListener('click', () => {
+                this.nextMonth();
+            });
+            
+            this.renderCalendar();
+        }
+        
+        togglePopup() {
+            if (this.popup.style.display === 'block') {
+                this.hidePopup();
+            } else {
+                this.showPopup();
+            }
+        }
+        
+        showPopup() {
+            this.popup.style.display = 'block';
+            this.renderCalendar();
+        }
+        
+        hidePopup() {
+            this.popup.style.display = 'none';
+        }
+        
+        previousMonth() {
+            this.currentMonth--;
+            if (this.currentMonth < 1) {
+                this.currentMonth = 12;
+                this.currentYear--;
+            }
+            this.renderCalendar();
+        }
+        
+        nextMonth() {
+            this.currentMonth++;
+            if (this.currentMonth > 12) {
+                this.currentMonth = 1;
+                this.currentYear++;
+            }
+            this.renderCalendar();
+        }
+        
+        renderCalendar() {
+            const monthNames = [
+                'فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور',
+                'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'
+            ];
+            
+            document.getElementById('current-month-year').textContent = 
+                monthNames[this.currentMonth - 1] + ' ' + this.currentYear;
+            
+            const daysContainer = document.getElementById('calendar-days');
+            daysContainer.innerHTML = '';
+            
+            // محاسبه روزهای ماه
+            const daysInMonth = this.getDaysInMonth(this.currentYear, this.currentMonth);
+            const firstDayOfWeek = this.getFirstDayOfWeek(this.currentYear, this.currentMonth);
+            
+            // روزهای خالی ابتدای ماه
+            for (let i = 0; i < firstDayOfWeek; i++) {
+                const emptyDay = document.createElement('div');
+                emptyDay.className = 'persian-datepicker-day other-month';
+                emptyDay.textContent = '';
+                daysContainer.appendChild(emptyDay);
+            }
+            
+            // روزهای ماه
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dayElement = document.createElement('div');
+                dayElement.className = 'persian-datepicker-day';
+                dayElement.textContent = day;
+                
+                // بررسی روز امروز
+                const today = new Date();
+                const todayShamsi = {
+                    year: today.getFullYear() - 621,
+                    month: today.getMonth() + 1,
+                    day: today.getDate()
+                };
+                
+                if (this.currentYear === todayShamsi.year && 
+                    this.currentMonth === todayShamsi.month && 
+                    day === todayShamsi.day) {
+                    dayElement.classList.add('today');
+                }
+                
+                // انتخاب روز
+                dayElement.addEventListener('click', () => {
+                    this.selectDate(day);
+                });
+                
+                daysContainer.appendChild(dayElement);
+            }
+        }
+        
+        selectDate(day) {
+            this.selectedDate = {
+                year: this.currentYear,
+                month: this.currentMonth,
+                day: day
+            };
+            
+            // فرمت کردن تاریخ
+            const formattedDate = this.currentYear + '/' + 
+                (this.currentMonth < 10 ? '0' + this.currentMonth : this.currentMonth) + '/' + 
+                (day < 10 ? '0' + day : day);
+            
+            this.input.value = formattedDate;
+            this.hidePopup();
+        }
+        
+        getDaysInMonth(year, month) {
+            // تقریبی برای محاسبه روزهای ماه شمسی
+            const monthDays = [31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, 30];
+            if (month === 12 && this.isLeapYear(year)) {
+                return 30;
+            }
+            return monthDays[month - 1];
+        }
+        
+        getFirstDayOfWeek(year, month) {
+            // تقریبی برای محاسبه روز هفته
+            const baseDate = new Date(year + 621, month - 1, 1);
+            return (baseDate.getDay() + 1) % 7;
+        }
+        
+        isLeapYear(year) {
+            // تقریبی برای سال کبیسه شمسی
+            return (year - 1) % 4 === 0;
+        }
+    }
+    
+    // اضافه کردن validation به فرم ویرایش
+    var editJobForm = document.getElementById('editJobForm');
+    if(editJobForm) {
+        editJobForm.addEventListener('submit', function(event) {
+            var dateInput = document.getElementById('new_date');
+            var hourInput = document.getElementById('new_hour');
+            var minuteInput = document.getElementById('new_minute');
+            
+            // Validation for date format
+            var datePattern = /^\d{4}\/\d{1,2}\/\d{1,2}$/;
+            if (!datePattern.test(dateInput.value)) {
+                alert('فرمت تاریخ نامعتبر است. لطفاً از فرمت YYYY/MM/DD استفاده کنید.');
+                event.preventDefault();
+                return false;
+            }
+            
+            // Validation for hour and minute
+            var hour = parseInt(hourInput.value);
+            var minute = parseInt(minuteInput.value);
+            
+            if (isNaN(hour) || hour < 0 || hour > 23) {
+                alert('ساعت باید بین ۰ تا ۲۳ باشد.');
+                event.preventDefault();
+                return false;
+            }
+            
+            if (isNaN(minute) || minute < 0 || minute > 59) {
+                alert('دقیقه باید بین ۰ تا ۵۹ باشد.');
+                event.preventDefault();
+                return false;
+            }
+            
+            return true;
+        });
+    }
+    
+    // راه‌اندازی تقویم شمسی
+    document.addEventListener('DOMContentLoaded', function() {
+        new PersianDatePicker('new_date', 'datepicker-popup');
+    });
 
 </script>
 </body>
