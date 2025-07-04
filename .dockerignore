@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -5,8 +6,32 @@ __pycache__/
 .Python
 env/
 venv/
+.env
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+
+# IDE
 .git
 .idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
 bot.log
 *.log
 *.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+README.md
+*.md
+
+# Development
+env.example
+.gitignore
